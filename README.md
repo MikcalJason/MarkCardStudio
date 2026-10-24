@@ -29,6 +29,10 @@ MarkCard Studio is a local-first desktop authoring tool for content creators and
 - **Publishing presets**: Xiaohongshu (3:4), Douyin (9:16), Weibo (6:7), square (1:1), and fully custom dimensions.
 - **Rich Markdown rendering**: headings, lists, task lists, tables, blockquotes, callouts, images, highlighted code, KaTeX formulas, Mermaid diagrams, interactive ECharts charts, footnotes, emoji, and inline emphasis.
 - **Flexible art direction**: solid colors, gradients, patterns, bundled wallpapers, custom background images, transparent output, and editable header/footer metadata.
+- **Reusable asset library**: import images with content-hash deduplication, thumbnails, search, tags, usage references, trash, and project `assets/` mirrors.
+- **Gallery mode**: arrange photos into a card sequence, pick a cover, add captions, switch fit/frame options, and export the whole set.
+- **Cover studio**: eight editorial templates, eight deterministic backgrounds, safe-area guides, editable type, and cover pages that export with the gallery.
+- **Lightweight image editing**: crop ratios, focal point, rotate/flip, filters, and save-as-new-asset while keeping the original.
 - **Multi-format export**: export all pages as PNG or JPG, generate a multipage PDF, or combine the document into one long PNG. Output is grouped into a document-specific folder.
 - **Local document support**: open and save Markdown files through native dialogs, resolve relative local images, persist settings, and recover unsaved drafts.
 - **Responsive workspace**: docked panels on wide screens, drawers on compact screens, zoom controls, dark mode, undo/redo, and page reordering.

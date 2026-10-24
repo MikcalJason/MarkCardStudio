@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MarkCard Studio UI Mockups</title>
+<style>
+  :root{
+    --bg:#eef3fa; --panel:#ffffff; --panel-2:#f8fafc; --ink:#0f172a; --muted:#64748b;
+    --line:#e2e8f0; --line-2:#cbd5e1; --blue:#2563eb; --blue-soft:#eff6ff;
+    --violet:#7c3aed; --green:#10b981; --amber:#f59e0b; --rose:#f43f5e;
+    --shadow:0 18px 50px rgba(15,23,42,.10);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased;
+  }
+  .screen{display:none;width:1600px;height:900px;padding:24px}
+  body[data-screen="create"] .screen[data-screen="create"],
+  body[data-screen="publish"] .screen[data-screen="publish"],
+  body[data-screen="ops"] .screen[data-screen="ops"],
+  body[data-screen="assets"] .screen[data-screen="assets"],
+  body[data-screen="assets-list"] .screen[data-screen="assets-list"],
+  body[data-screen="ops-calendar"] .screen[data-screen="ops-calendar"],
+  body[data-screen="ops-review"] .screen[data-screen="ops-review"]{display:block}
+  .app{
+    width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;
+    border:1px solid #d9e2ef;border-radius:18px;background:
+      radial-gradient(circle at 52% 30%,rgba(255,244,223,.65),transparent 24rem),
+      linear-gradient(180deg,#fbfcff 0%,#f2f5fb 100%);
+    box-shadow:var(--shadow);
+  }
+  .titlebar{
+    height:62px;flex:0 0 62px;display:flex;align-items:center;gap:18px;padding:0 20px;
+    border-bottom:1px solid rgba(226,232,240,.8);background:rgba(255,255,255,.88);
+    backdrop-filter:blur(14px)
+  }
+  .brand{display:flex;align-items:center;gap:10px;min-width:220px}
+  .logo{
+    width:30px;height:30px;border-radius:9px;display:grid;place-items:center;color:#fff;
+    font-weight:900;font-size:15px;background:linear-gradient(135deg,#2563eb,#7c3aed);
+    box-shadow:0 6px 14px rgba(37,99,235,.28)
+  }
+  .brand b{font-size:15px;letter-spacing:.1px}
+  .crumb{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;min-width:250px}
+  .crumb b{color:#334155;font-weight:600}
+  .mode-tabs{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid var(--line);border-radius:10px;background:#f8fafc}
+  .mode-tabs span{padding:6px 14px;border-radius:7px;font-size:12px;color:#64748b;font-weight:600}
+  .mode-tabs span.on{background:var(--blue);color:#fff;box-shadow:0 3px 8px rgba(37,99,235,.22)}
+  .titlebar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .kbd{font-size:11px;color:#64748b;border:1px solid var(--line);background:#fff;border-radius:7px;padding:6px 9px;font-weight:600}
+  .icon-btn{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:#fff;display:grid;place-items:center;font-size:13px;color:#475569}
+  .toolbar{
+    height:50px;flex:0 0 50px;display:flex;align-items:center;gap:8px;padding:0 16px;
+    border-bottom:1px solid rgba(226,232,240,.8);background:rgba(255,255,255,.82)
+  }
+  .tbtn{height:30px;padding:0 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:#475569;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+  .tbtn:hover{background:#f1f5f9}
+  .tbtn.outline{border-color:var(--line);background:#fff;box-shadow:0 1px 1px rgba(15,23,42,.03)}
+  .divider{width:1px;height:20px;background:var(--line);margin:0 4px}
+  .seg{display:flex;gap:2px;background:#f1f5f9;border:1px solid var(--line);border-radius:8px;padding:3px}
+  .seg span{padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;color:#64748b}
+  .seg span.on{background:#fff;color:var(--blue);box-shadow:0 1px 3px rgba(15,23,42,.08)}
+  .toolbar-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .primary{height:31px;padding:0 13px;border-radius:8px;background:var(--blue);color:#fff;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:7px;box-shadow:0 4px 10px rgba(37,99,235,.22)}
+  .main{flex:1;min-height:0;display:grid;gap:12px;padding:12px}
+  .main.create{grid-template-columns:320px minmax(0,1fr) 310px}
+  .main.publish{grid-template-columns:330px minmax(0,1fr) 310px}
+  .main.ops{grid-template-columns:196px minmax(0,1fr)}
+  .panel{background:rgba(255,255,255,.93);border:1px solid rgba(226,232,240,.9);border-radius:13px;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+  .panel-head{height:44px;flex:0 0 44px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line)}
+  .panel-head h3{margin:0;font-size:12px;font-weight:700;letter-spacing:.02em}
+  .panel-head .sub{font-size:11px;color:var(--muted);font-weight:500}
+  .panel-head .right{margin-left:auto;display:flex;align-items:center;gap:6px}
+  .panel-body{padding:12px 14px;overflow:hidden;min-height:0}
+  .muted{color:var(--muted)}
+  .tiny{font-size:10px;line-height:1.5}
+  .xs{font-size:11px;line-height:1.55}
+  .sm{font-size:12px;line-height:1.55}
+  .statusbar{
+    height:44px;flex:0 0 44px;display:flex;align-items:center;gap:14px;padding:0 18px;
+    border-top:1px solid rgba(226,232,240,.8);background:rgba(255,255,255,.88);font-size:11px;color:#64748b
+  }
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px}
+  .dot.green{background:var(--green)} .dot.amber{background:var(--amber)} .dot.rose{background:var(--rose)} .dot.blue{background:var(--blue)}
+  .statusbar .right{margin-left:auto;display:flex;gap:14px;align-items:center}
+
+  /* left page strip */
+  .page-list{display:flex;flex-direction:column;gap:8px;padding:10px 12px;overflow:hidden}
+  .page-item{display:flex;gap:10px;align-items:center;padding:6px;border-radius:9px;border:1px solid transparent}
+  .page-item.on{background:var(--blue-soft);border-color:#bfdbfe}
+  .page-thumb{width:58px;height:42px;border-radius:6px;flex:0 0 auto;border:1px solid rgba(15,23,42,.08);position:relative;overflow:hidden}
+  .page-thumb .no{position:absolute;left:4px;bottom:3px;font-size:9px;color:rgba(255,255,255,.95);font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.35)}
+  .page-meta{min-width:0}
+  .page-meta b{display:block;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .page-meta span{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+  .badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:700;border:1px solid}
+  .badge.blue{color:#1d4ed8;background:#eff6ff;border-color:#bfdbfe}
+  .badge.green{color:#047857;background:#ecfdf5;border-color:#a7f3d0}
+  .badge.amber{color:#b45309;background:#fffbeb;border-color:#fde68a}
+  .badge.rose{color:#be123c;background:#fff1f2;border-color:#fecdd3}
+  .badge.violet{color:#6d28d9;background:#f5f3ff;border-color:#ddd6fe}
+  .tray{border-top:1px solid var(--line);padding:10px 12px}
+  .tray-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+  .tray-grid .mini{height:42px;border-radius:6px;border:1px solid rgba(15,23,42,.08)}
+
+  /* canvas */
+  .canvas-wrap{display:flex;flex-direction:column;min-height:0}
+  .canvas-head{height:48px;flex:0 0 48px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--line)}
+  .canvas-head .title{font-size:12px;font-weight:700}
+  .canvas-head .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .canvas-stage{flex:1;min-height:0;display:grid;place-items:center;padding:16px;background:
+    radial-gradient(circle at 50% 42%,rgba(255,255,255,.9),rgba(241,245,249,.35) 70%)}
+  .card{
+    width:390px;height:520px;border-radius:14px;background:#fff;border:1px solid #e2e8f0;
+    box-shadow:0 18px 40px rgba(15,23,42,.13);padding:26px;display:flex;flex-direction:column;overflow:hidden;position:relative
+  }
+  .card .kicker{font-size:9px;letter-spacing:.18em;color:#64748b;text-transform:uppercase;font-weight:800}
+  .card h1{font-size:29px;line-height:1.08;letter-spacing:-.03em;margin:14px 0 8px;font-weight:900}
+  .card .lead{font-size:10px;line-height:1.6;color:#475569;margin:0 0 14px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;min-height:0}
+  .grid2 .img{border-radius:7px;border:1px solid rgba(15,23,42,.07);position:relative;overflow:hidden}
+  .grid2 .img:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 55%,rgba(15,23,42,.18))}
+  .card .foot{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:8px;color:#64748b;letter-spacing:.08em;text-transform:uppercase}
+  .card .pg{font-weight:800;color:#334155}
+  .canvas-bar{height:44px;flex:0 0 44px;display:flex;align-items:center;justify-content:center;gap:10px;border-top:1px solid var(--line);font-size:11px;color:#475569}
+  .pill{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 8px;font-size:10px;font-weight:600;color:#475569}
+  .pill.on{background:var(--blue);border-color:var(--blue);color:#fff}
+
+  /* inspector */
+  .inspector-tabs{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)}
+  .inspector-tabs span{text-align:center;padding:10px 0;font-size:10px;color:#64748b;font-weight:700;border-bottom:2px solid transparent}
+  .inspector-tabs span.on{color:var(--blue);border-bottom-color:var(--blue)}
+  .field{margin-bottom:12px}
+  .label{display:flex;justify-content:space-between;font-size:10px;color:#64748b;font-weight:700;margin-bottom:5px}
+  .control{height:28px;border:1px solid var(--line);border-radius:7px;background:#fff;display:flex;align-items:center;padding:0 8px;font-size:10px;color:#334155}
+  .layout-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .layout-opt{height:42px;border:1px solid var(--line);border-radius:7px;background:#fff;display:grid;place-items:center;gap:2px;padding:5px}
+  .layout-opt.on{border-color:#93c5fd;background:#eff6ff;box-shadow:0 0 0 2px rgba(59,130,246,.12)}
+  .layout-opt i{display:block;background:#cbd5e1;border-radius:1px}
+  .layout-opt.on i{background:#60a5fa}
+  .mini-cover{height:88px;border-radius:8px;border:1px solid var(--line);background:linear-gradient(135deg,#fde68a,#fb923c 55%,#7c3aed);position:relative;overflow:hidden}
+  .mini-cover:after{content:"把想法变成作品";position:absolute;left:10px;top:12px;font-size:12px;line-height:1.1;font-weight:900;color:#3b0764}
+  .readiness{margin-top:auto;border:1px solid #a7f3d0;background:#ecfdf5;border-radius:9px;padding:9px 10px;display:flex;align-items:center;gap:9px}
+  .ring{width:36px;height:36px;border-radius:50%;background:conic-gradient(var(--green) 310deg,#d1fae5 0);display:grid;place-items:center;font-size:9px;font-weight:900;color:#047857;position:relative}
+  .ring:after{content:"";position:absolute;inset:5px;background:#ecfdf5;border-radius:50%}
+  .ring b{position:relative;z-index:1}
+
+  /* publish */
+  .work-list{padding:10px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .work{border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;gap:9px;background:#fff}
+  .work.on{border-color:#93c5fd;background:#eff6ff;box-shadow:0 0 0 2px rgba(59,130,246,.10)}
+  .work .cover{width:56px;height:74px;border-radius:6px;flex:0 0 auto;border:1px solid rgba(15,23,42,.08)}
+  .work .body{min-width:0;flex:1}
+  .work b{display:block;font-size:11px;line-height:1.35;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .work .meta{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+  .work .score{margin-left:auto;font-size:10px;font-weight:800;color:#047857}
+  .variant-tabs{height:46px;flex:0 0 46px;display:flex;align-items:center;gap:4px;padding:0 12px;border-bottom:1px solid var(--line)}
+  .variant-tabs span{padding:6px 10px;border-radius:7px;font-size:11px;font-weight:700;color:#64748b}
+  .variant-tabs span.on{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+  .variant-body{flex:1;min-height:0;display:grid;grid-template-columns:270px minmax(0,1fr);gap:12px;padding:12px;overflow:hidden}
+  .phone{width:230px;height:auto;aspect-ratio:3/4;border-radius:16px;border:7px solid #0f172a;background:#fff;overflow:hidden;box-shadow:0 12px 26px rgba(15,23,42,.16);margin:0 auto}
+  .phone .ph-img{height:65%;background:linear-gradient(135deg,#fbcfe8,#c4b5fd 50%,#93c5fd);position:relative}
+  .phone .ph-img:after{content:"3:4 封面";position:absolute;left:8px;bottom:7px;color:#fff;font-size:9px;font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.35)}
+  .phone .ph-body{padding:10px 10px 0;font-size:9px;line-height:1.5;color:#334155}
+  .phone .ph-body b{display:block;font-size:11px;margin-bottom:4px;line-height:1.3}
+  .copy-box{border:1px solid var(--line);border-radius:9px;padding:10px;background:#fff;margin-bottom:10px}
+  .copy-box .top{display:flex;justify-content:space-between;font-size:10px;color:#64748b;font-weight:700;margin-bottom:6px}
+  .copy-box .text{font-size:11px;color:#334155;line-height:1.6}
+  .counter{font-size:10px;color:var(--amber);font-weight:700}
+  .tagrow{display:flex;gap:5px;flex-wrap:wrap}
+  .tag{font-size:9px;padding:3px 7px;border-radius:999px;background:#f1f5f9;color:#475569;border:1px solid var(--line)}
+  .checklist{display:flex;flex-direction:column;gap:7px}
+  .check{display:flex;gap:7px;align-items:flex-start;font-size:10px;line-height:1.45;color:#475569}
+  .check .mark{width:15px;height:15px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:900;flex:0 0 auto}
+  .mark.ok{background:#ecfdf5;color:#047857;border:1px solid #a7f3d0}
+  .mark.warn{background:#fffbeb;color:#b45309;border:1px solid #fde68a}
+  .mark.bad{background:#fff1f2;color:#be123c;border:1px solid #fecdd3}
+  .actions{display:flex;flex-direction:column;gap:7px;margin-top:10px}
+  .btn{height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:1px solid var(--line);background:#fff;color:#334155}
+  .btn.blue{background:var(--blue);border-color:var(--blue);color:#fff}
+  .btn.ghost{background:#f8fafc}
+
+  /* ops */
+  .ops-nav{padding:12px 10px;display:flex;flex-direction:column;gap:4px}
+  .ops-nav .item{padding:9px 10px;border-radius:8px;font-size:11px;font-weight:700;color:#64748b;display:flex;align-items:center;gap:8px}
+  .ops-nav .item.on{background:#eff6ff;color:#1d4ed8}
+  .ops-content{padding:14px;overflow:hidden;display:flex;flex-direction:column;gap:12px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .kpi{border:1px solid var(--line);border-radius:10px;padding:12px;background:#fff}
+  .kpi .n{font-size:24px;font-weight:900;letter-spacing:-.03em;margin:5px 0 2px}
+  .kpi .d{font-size:10px;color:#64748b;display:flex;justify-content:space-between}
+  .up{color:#047857;font-weight:800}.down{color:#be123c;font-weight:800}
+  .ops-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:12px;flex:1;min-height:0}
+  .box{border:1px solid var(--line);border-radius:11px;background:#fff;padding:12px;min-height:0;overflow:hidden}
+  .box h3{margin:0 0 10px;font-size:11px;font-weight:800;display:flex;justify-content:space-between;align-items:center}
+  .pipeline{display:flex;gap:6px;align-items:flex-end;height:100px;padding-top:8px}
+  .bar{flex:1;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,#93c5fd,#bfdbfe);position:relative;min-height:8px}
+  .bar span{position:absolute;top:-15px;left:0;right:0;text-align:center;font-size:9px;color:#475569;font-weight:700}
+  .schedule{display:flex;flex-direction:column;gap:8px}
+  .schedule .row{display:flex;gap:8px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:7px 8px}
+  .schedule .date{width:36px;flex:0 0 auto;text-align:center;font-size:9px;color:#64748b;font-weight:700}
+  .schedule .date b{display:block;font-size:14px;color:#0f172a}
+  .schedule .info{min-width:0;flex:1}
+  .schedule .info b{display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .schedule .info span{font-size:9px;color:#64748b}
+  .mini-table{width:100%;border-collapse:collapse;font-size:10px}
+  .mini-table th{text-align:left;color:#64748b;font-weight:700;padding:0 0 7px;border-bottom:1px solid var(--line)}
+  .mini-table td{padding:7px 0;border-bottom:1px solid #f1f5f9;color:#334155}
+
+  /* ops calendar */
+  .cal-toolbar{height:38px;display:flex;align-items:center;gap:8px}
+  .cal-toolbar .month{font-size:14px;font-weight:900;letter-spacing:-.02em}
+  .cal-grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:1fr;gap:6px}
+  .cal-dow{font-size:9px;font-weight:800;color:#94a3b8;text-align:center;padding-bottom:2px}
+  .cal-cell{border:1px solid var(--line);border-radius:8px;background:#fff;padding:5px;display:flex;flex-direction:column;gap:4px;overflow:hidden;min-height:0}
+  .cal-cell.out{background:#f8fafc;border-color:#eef2f7}
+  .cal-cell.today{border-color:#93c5fd;box-shadow:0 0 0 2px rgba(59,130,246,.10)}
+  .cal-date{font-size:10px;font-weight:800;color:#475569;display:flex;justify-content:space-between;align-items:center}
+  .cal-date .dot{width:5px;height:5px}
+  .cal-event{font-size:8px;line-height:1.3;padding:3px 5px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-left:3px solid;font-weight:600}
+  .cal-event.blue{background:#eff6ff;color:#1d4ed8;border-color:#60a5fa}
+  .cal-event.violet{background:#f5f3ff;color:#6d28d9;border-color:#a78bfa}
+  .cal-event.amber{background:#fffbeb;color:#b45309;border-color:#fbbf24}
+  .cal-event.rose{background:#fff1f2;color:#be123c;border-color:#fb7185}
+  .cal-event.green{background:#ecfdf5;color:#047857;border-color:#34d399}
+
+  /* ops review */
+  .review-layout{display:grid;grid-template-columns:1.02fr 1.18fr;gap:12px;flex:1;min-height:0}
+  .review-list{display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .review-card{border:1px solid var(--line);border-radius:9px;padding:8px;display:flex;gap:8px;background:#fff}
+  .review-card.on{border-color:#93c5fd;background:#eff6ff;box-shadow:0 0 0 2px rgba(59,130,246,.10)}
+  .review-card .cover{width:42px;height:56px;border-radius:5px;flex:0 0 auto;border:1px solid rgba(15,23,42,.08)}
+  .review-card .body{min-width:0;flex:1}
+  .review-card .body b{display:block;font-size:10px;line-height:1.35;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .review-card .body span{display:block;font-size:9px;color:#64748b}
+  .review-card .meta{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}
+  .review-detail{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px;display:flex;flex-direction:column;gap:9px;min-height:0;overflow:hidden}
+  .review-detail .head{display:flex;gap:10px;align-items:flex-start}
+  .review-detail .head .cover{width:64px;height:84px;border-radius:7px;flex:0 0 auto;border:1px solid rgba(15,23,42,.08)}
+  .review-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .review-metric{border:1px solid var(--line);border-radius:7px;padding:6px 7px;background:#f8fafc}
+  .review-metric .n{font-size:14px;font-weight:900;margin-top:2px}
+  .review-note{border:1px solid var(--line);border-radius:8px;padding:8px 9px;background:#fff}
+  .review-note .t{font-size:9px;font-weight:800;color:#64748b;margin-bottom:3px;letter-spacing:.03em}
+  .review-note .c{font-size:10px;line-height:1.55;color:#334155}
+
+  /* assets overlay */
+  .dim{position:absolute;inset:0;background:rgba(15,23,42,.36);backdrop-filter:blur(3px)}
+  .shell-for-overlay{position:relative;width:100%;height:100%}
+  .overlay{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:1280px;height:760px;background:#fff;border-radius:16px;border:1px solid #dbe3ef;
+    box-shadow:0 40px 100px rgba(15,23,42,.30);overflow:hidden;display:flex;flex-direction:column
+  }
+  .overlay-head{height:64px;flex:0 0 64px;display:flex;align-items:center;gap:12px;padding:0 18px;border-bottom:1px solid var(--line)}
+  .overlay-head h2{margin:0;font-size:14px;font-weight:900}
+  .search{height:32px;flex:1;max-width:360px;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;padding:0 10px;font-size:11px;color:#94a3b8;background:#f8fafc}
+  .filters{display:flex;gap:6px;align-items:center}
+  .chip{font-size:10px;font-weight:700;color:#64748b;border:1px solid var(--line);border-radius:999px;padding:5px 9px;background:#fff}
+  .chip.on{color:#1d4ed8;background:#eff6ff;border-color:#bfdbfe}
+  .overlay-body{flex:1;min-height:0;display:grid;grid-template-columns:190px minmax(0,1fr) 280px}
+  .collections{border-right:1px solid var(--line);padding:12px 10px}
+  .collections .item{padding:7px 8px;border-radius:7px;font-size:11px;color:#475569;font-weight:600;display:flex;justify-content:space-between}
+  .collections .item.on{background:#eff6ff;color:#1d4ed8}
+  .asset-grid{padding:14px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-content:start;overflow:hidden}
+  .asset{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff;position:relative}
+  .asset .im{height:112px}
+  .asset .cap{padding:6px 7px;font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .asset.sel{box-shadow:0 0 0 3px rgba(37,99,235,.22);border-color:#60a5fa}
+  .asset .ai{position:absolute;left:6px;top:6px}
+  .asset .check{position:absolute;right:6px;top:6px;width:16px;height:16px;border-radius:4px;background:#2563eb;color:#fff;font-size:10px;display:grid;place-items:center;border:2px solid #fff}
+  .detail{border-left:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+  .detail .big{height:170px;border-radius:9px;border:1px solid var(--line)}
+  .detail .row{display:flex;justify-content:space-between;font-size:10px;color:#64748b;border-bottom:1px solid #f1f5f9;padding-bottom:6px}
+  .detail .row b{color:#334155}
+  .overlay-foot{height:52px;flex:0 0 52px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 18px;font-size:11px;color:#64748b}
+  .overlay-foot .right{margin-left:auto;display:flex;gap:7px}
+
+  /* assets list / batch */
+  .asset-table-wrap{padding:12px 14px;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+  .asset-table{width:100%;border-collapse:collapse;font-size:10px;table-layout:fixed}
+  .asset-table th{text-align:left;color:#64748b;font-weight:700;padding:0 6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .asset-table td{padding:7px 6px;border-bottom:1px solid #f1f5f9;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .asset-table tr.sel td{background:#eff6ff}
+  .asset-table .thumbcell{width:38px}
+  .asset-table .thumb{width:30px;height:30px;border-radius:5px;border:1px solid rgba(15,23,42,.08)}
+  .cb{width:14px;height:14px;border:1px solid #cbd5e1;border-radius:3px;display:inline-grid;place-items:center;font-size:9px;color:#fff;vertical-align:middle}
+  .cb.on{background:var(--blue);border-color:var(--blue)}
+  .batch-summary{border:1px solid #bfdbfe;background:#eff6ff;border-radius:9px;padding:10px;margin-bottom:10px}
+  .batch-summary b{font-size:18px;letter-spacing:-.02em}
+  .batch-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .batch-actions .btn{height:28px;font-size:10px}
+  .danger{color:#be123c !important;border-color:#fecdd3 !important;background:#fff1f2 !important}
+  .grad1{background:linear-gradient(135deg,#fde68a,#fb923c 55%,#7c3aed)}
+  .grad2{background:linear-gradient(135deg,#bfdbfe,#60a5fa 55%,#1e3a8a)}
+  .grad3{background:linear-gradient(135deg,#fbcfe8,#c084fc 55%,#7c3aed)}
+  .grad4{background:linear-gradient(135deg,#bbf7d0,#34d399 55%,#065f46)}
+  .grad5{background:linear-gradient(135deg,#fecdd3,#fb7185 55%,#9f1239)}
+  .grad6{background:linear-gradient(135deg,#e2e8f0,#94a3b8 55%,#334155)}
+  .grad7{background:linear-gradient(135deg,#fef3c7,#f59e0b 55%,#92400e)}
+  .grad8{background:linear-gradient(135deg,#cffafe,#22d3ee 55%,#155e75)}
+  .grad9{background:linear-gradient(135deg,#ede9fe,#a78bfa 55%,#4c1d95)}
+  .grad10{background:linear-gradient(135deg,#fae8ff,#e879f9 55%,#86198f)}
+  .grad11{background:linear-gradient(135deg,#dcfce7,#4ade80 55%,#166534)}
+  .grad12{background:linear-gradient(135deg,#ffedd5,#fb923c 55%,#9a3412)}
+  .avatar{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#2563eb,#7c3aed);display:grid;place-items:center;color:#fff;font-size:9px;font-weight:900}
+  .stack{display:flex;align-items:center;gap:6px}
+</style>
+<script>
+  const params = new URLSearchParams(location.search);
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.dataset.screen = params.get('screen') || 'create';
+  });
+</script>
+</head>
+<body data-screen="create">
+
+<!-- ================= CREATE / GALLERY ================= -->
+<section class="screen" data-screen="create">
+  <div class="app">
+    <div class="titlebar">
+      <div class="brand"><span class="logo">M</span><b>MarkCard Studio</b></div>
+      <div class="crumb">我的作品 <span>/</span> <b>把今天的想法变成作品</b></div>
+      <div class="mode-tabs"><span class="on">创作</span><span>发布</span><span>运营</span></div>
+      <div class="titlebar-right"><span class="kbd">⌘K 搜索</span><span class="icon-btn">?</span><span class="icon-btn">⚙</span><span class="avatar">Z</span></div>
+    </div>
+    <div class="toolbar">
+      <button class="tbtn outline">＋ 新建</button><button class="tbtn">打开</button><button class="tbtn">保存</button>
+      <span class="divider"></span>
+      <div class="seg"><span>写作</span><span class="on">图集</span><span>海报</span></div>
+      <span class="divider"></span>
+      <button class="tbtn">↶</button><button class="tbtn">↷</button>
+      <div class="toolbar-right">
+        <button class="tbtn outline">主题：瑞士网格 ▾</button>
+        <button class="tbtn outline">▦ 素材</button>
+        <button class="primary">发布作品 →</button>
+      </div>
+    </div>
+    <div class="main create">
+      <div class="panel">
+        <div class="panel-head"><h3>页面</h3><span class="sub">9 页</span><div class="right"><span class="badge blue">图集</span></div></div>
+        <div class="page-list">
+          <div class="page-item"><div class="page-thumb grad1"><span class="no">封面</span></div><div class="page-meta"><b>把想法变成作品</b><span>封面 · 3:4</span></div><span class="badge amber">封面</span></div>
+          <div class="page-item on"><div class="page-thumb grad2"><span class="no">02</span></div><div class="page-meta"><b>先写，再排版</b><span>内页 · 3:4</span></div></div>
+          <div class="page-item"><div class="page-thumb grad3"><span class="no">03</span></div><div class="page-meta"><b>让图片说话</b><span>内页 · 3:4</span></div></div>
+          <div class="page-item"><div class="page-thumb grad4"><span class="no">04</span></div><div class="page-meta"><b>三个排版习惯</b><span>内页 · 3:4</span></div></div>
+          <div class="page-item"><div class="page-thumb grad5"><span class="no">05</span></div><div class="page-meta"><b>封面决定点击</b><span>内页 · 3:4</span></div></div>
+          <div class="page-item"><div class="page-thumb grad6"><span class="no">06</span></div><div class="page-meta"><b>发布前检查</b><span>内页 · 3:4</span></div></div>
+        </div>
+        <div class="tray">
+          <div class="label" style="margin:0">素材托盘 <span class="tiny muted">最近使用</span></div>
+          <div class="tray-grid"><div class="mini grad7"></div><div class="mini grad8"></div><div class="mini grad9"></div><div class="mini grad10"></div></div>
+        </div>
+      </div>
+
+      <div class="panel canvas-wrap">
+        <div class="canvas-head"><span class="title">图集 · 先写，再排版</span><span class="badge blue">3:4</span><span class="tiny muted">1080 × 1440</span><div class="right"><span class="pill">安全区</span><span class="pill">网格</span><span class="pill">对比</span></div></div>
+        <div class="canvas-stage">
+          <div class="card">
+            <div class="kicker">MARKCARD · 2026</div>
+            <h1>先写，<br/>再排版。</h1>
+            <p class="lead">把内容写顺，再把节奏交给版式。两张图，一段话，也可以是一个完整的作品。</p>
+            <div class="grid2">
+              <div class="img grad2"></div><div class="img grad3"></div>
+              <div class="img grad7"></div><div class="img grad4"></div>
+            </div>
+            <div class="foot"><span>@MarkCard</span><span class="pg">02 / 09</span></div>
+          </div>
+        </div>
+        <div class="canvas-bar"><span class="pill">‹</span><span class="pill">02 / 09</span><span class="pill">›</span><span class="pill on">单页</span><span class="pill">总览</span><span class="pill">74%</span></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>Inspector</h3><div class="right"><span class="badge blue">发布 86</span></div></div>
+        <div class="inspector-tabs"><span class="on">版式</span><span>封面</span><span>图片</span><span>发布</span></div>
+        <div class="panel-body" style="display:flex;flex-direction:column;flex:1;min-height:0">
+          <div class="field"><div class="label">版式 <span class="muted tiny">4 图</span></div>
+            <div class="layout-grid">
+              <div class="layout-opt"><i style="width:22px;height:7px"></i><i style="width:22px;height:7px"></i></div>
+              <div class="layout-opt on"><i style="width:11px;height:7px"></i><i style="width:11px;height:7px"></i><i style="width:11px;height:7px"></i><i style="width:11px;height:7px"></i></div>
+              <div class="layout-opt"><i style="width:7px;height:7px"></i><i style="width:7px;height:7px"></i><i style="width:7px;height:7px"></i></div>
+            </div>
+          </div>
+          <div class="field"><div class="label">比例 <span>3:4</span></div><div class="control">3:4 ▾</div></div>
+          <div class="field"><div class="label">间距 <span>10 px</span></div><div class="control" style="padding:0 10px"><div style="height:3px;width:100%;background:#e2e8f0;border-radius:9px;position:relative"><i style="position:absolute;left:38%;top:-4px;width:11px;height:11px;border-radius:50%;background:#2563eb"></i></div></div></div>
+          <div class="field"><div class="label">圆角 <span>12 px</span></div><div class="control" style="padding:0 10px"><div style="height:3px;width:100%;background:#e2e8f0;border-radius:9px;position:relative"><i style="position:absolute;left:55%;top:-4px;width:11px;height:11px;border-radius:50%;background:#2563eb"></i></div></div></div>
+          <div class="field"><div class="label">说明 <span>浮层</span></div><div class="control">浮层 ▾</div></div>
+          <div class="field"><div class="label">封面</div><div class="mini-cover"></div><div class="tiny muted" style="margin-top:5px">标题安全区已检查 · 3:4 / 1:1 / 2.35:1</div></div>
+          <div class="readiness"><div class="ring"><b>86</b></div><div><b class="sm">发布就绪度 86</b><div class="tiny muted">2 个 warning · 0 blocker</div></div><span style="margin-left:auto" class="badge green">可发布</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar"><span><span class="dot green"></span>自动保存：已保存</span><span>画布 1080×1440</span><span>9 页 · 12 素材</span><span><span class="dot green"></span>就绪度 86</span><span>生成 0 / 0</span><div class="right"><span>⌘K 命令</span><span>帮助</span><span class="muted">赞助</span></div></div>
+  </div>
+</section>
+
+<!-- ================= PUBLISH ================= -->
+<section class="screen" data-screen="publish">
+  <div class="app">
+    <div class="titlebar">
+      <div class="brand"><span class="logo">M</span><b>MarkCard Studio</b></div>
+      <div class="crumb">发布中心 <span>/</span> <b>本周 4 篇待发</b></div>
+      <div class="mode-tabs"><span>创作</span><span class="on">发布</span><span>运营</span></div>
+      <div class="titlebar-right"><span class="kbd">⌘K 搜索</span><span class="icon-btn">?</span><span class="icon-btn">⚙</span><span class="avatar">Z</span></div>
+    </div>
+    <div class="toolbar">
+      <button class="primary">＋ 新建发布</button><button class="tbtn outline">刷新</button><button class="tbtn">筛选</button>
+      <span class="divider"></span>
+      <div class="seg"><span class="on">待发布 4</span><span>已排期 2</span><span>已发布 6</span></div>
+      <div class="toolbar-right"><span class="badge green">微信已连接</span><span class="badge amber">小红书半自动</span><button class="tbtn outline">渠道设置</button></div>
+    </div>
+    <div class="main publish">
+      <div class="panel">
+        <div class="panel-head"><h3>作品</h3><span class="sub">12 个</span><div class="right"><span class="badge blue">按就绪度</span></div></div>
+        <div class="work-list">
+          <div class="work on"><div class="cover grad1"></div><div class="body"><b>把今天的想法变成作品</b><div class="tiny muted">小红书 · 公众号</div><div class="meta"><span class="badge blue">待发布</span><span class="badge green">86</span></div></div></div>
+          <div class="work"><div class="cover grad2"></div><div class="body"><b>5 个让封面更好点的习惯</b><div class="tiny muted">小红书</div><div class="meta"><span class="badge amber">待修复</span><span class="badge amber">72</span></div></div></div>
+          <div class="work"><div class="cover grad3"></div><div class="body"><b>我不会再这样写标题了</b><div class="tiny muted">公众号</div><div class="meta"><span class="badge violet">已排期</span><span class="badge green">91</span></div></div></div>
+          <div class="work"><div class="cover grad4"></div><div class="body"><b>一张图讲清楚 Markdown</b><div class="tiny muted">小红书</div><div class="meta"><span class="badge green">已发布</span><span class="badge blue">待复盘</span></div></div></div>
+        </div>
+        <div class="tray" style="margin-top:auto"><div class="label" style="margin:0">批量操作 <span class="tiny muted">已选 0</span></div><div class="tray-grid" style="grid-template-columns:1fr 1fr"><div class="mini" style="height:28px;display:grid;place-items:center;font-size:9px;color:#64748b">生成变体</div><div class="mini" style="height:28px;display:grid;place-items:center;font-size:9px;color:#64748b">导出发布包</div></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="variant-tabs"><span class="on">小红书</span><span>公众号图片消息</span><span>本地发布包</span><div style="margin-left:auto" class="badge amber">19 / 20 字</div></div>
+        <div class="variant-body">
+          <div>
+            <div class="phone"><div class="ph-img grad1"></div><div class="ph-body"><b>把想法变成作品，我只用了 5 步</b><div class="tiny muted">先写，再排版。两张图，一段话，也可以是一个完整的作品。</div><div style="display:flex;gap:4px;margin-top:8px"><span class="tag">#内容创作</span><span class="tag">#Markdown</span></div></div></div>
+            <div class="tiny muted" style="text-align:center;margin-top:8px">3:4 · 1080 × 1440 · 8 张</div>
+          </div>
+          <div style="min-width:0">
+            <div class="copy-box"><div class="top"><span>标题</span><span class="counter">19 / 20</span></div><div class="text"><b>把想法变成作品，我只用了 5 步</b></div></div>
+            <div class="copy-box"><div class="top"><span>正文</span><span class="tiny">286 / 1000</span></div><div class="text">先写，再排版。<br/><br/>01 把长文拆成 9 张图<br/>02 封面只留一个重点<br/>03 图片顺序就是阅读顺序<br/><br/>收藏这篇，下次直接用。</div></div>
+            <div class="copy-box"><div class="top"><span>标签</span><span class="tiny">3 / 10</span></div><div class="tagrow"><span class="tag">#内容创作</span><span class="tag">#Markdown</span><span class="tag">#自媒体</span><span class="tag">＋ 添加</span></div></div>
+            <div class="copy-box" style="margin-bottom:0"><div class="top"><span>图片顺序</span><span class="tiny">首图 = 封面</span></div><div style="display:flex;gap:5px"><div class="mini-cover" style="width:64px;height:48px;border-radius:5px"></div><div class="mini grad2" style="width:64px;height:48px;border-radius:5px"></div><div class="mini grad3" style="width:64px;height:48px;border-radius:5px"></div><div class="mini grad4" style="width:64px;height:48px;border-radius:5px"></div><div class="mini grad5" style="width:64px;height:48px;border-radius:5px"></div><div style="width:40px;height:48px;border:1px dashed #cbd5e1;border-radius:5px;display:grid;place-items:center;color:#94a3b8">＋</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h3>发布检查</h3><div class="right"><span class="badge green">86</span></div></div>
+        <div class="panel-body" style="display:flex;flex-direction:column;flex:1;min-height:0">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><div class="ring" style="width:46px;height:46px;font-size:11px"><b>86</b></div><div><b class="sm">可以发布</b><div class="tiny muted">0 blocker · 2 warning</div></div></div>
+          <div class="checklist">
+            <div class="check"><span class="mark ok">✓</span><span>图片 8 / 18，尺寸 1080×1440</span></div>
+            <div class="check"><span class="mark ok">✓</span><span>封面安全区通过</span></div>
+            <div class="check"><span class="mark warn">!</span><span>标题 19 / 20，建议留 1 字余量</span></div>
+            <div class="check"><span class="mark warn">!</span><span>第 5 页图片接近体积上限</span></div>
+            <div class="check"><span class="mark ok">✓</span><span>标签 3 / 10</span></div>
+            <div class="check"><span class="mark ok">✓</span><span>无重复发布记录</span></div>
+          </div>
+          <button class="btn ghost" style="margin-top:10px">一键修复 2 个 warning</button>
+          <div class="actions"><button class="btn">复制文案</button><button class="btn blue">准备发布 →</button><button class="btn ghost">仅导出发布包</button></div>
+          <div style="margin-top:auto;border-top:1px solid var(--line);padding-top:10px"><div class="label" style="margin-bottom:6px">最近发布 <span class="tiny muted">查看全部</span></div><div class="tiny muted" style="line-height:1.8"><span class="dot green"></span>昨天 20:10 · 小红书 · 已发布<br/><span class="dot rose"></span>10-18 12:00 · 公众号 · 48001</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar"><span><span class="dot green"></span>自动保存：已保存</span><span>发布队列 1 / 1</span><span>待发布 4 · 已排期 2</span><div class="right"><span>微信已连接</span><span>小红书：半自动</span><span class="muted">⌘K 命令</span></div></div>
+  </div>
+</section>
+
+<!-- ================= OPS ================= -->
+<section class="screen" data-screen="ops">
+  <div class="app">
+    <div class="titlebar">
+      <div class="brand"><span class="logo">M</span><b>MarkCard Studio</b></div>
+      <div class="crumb">运营 <span>/</span> <b>本周概览</b></div>
+      <div class="mode-tabs"><span>创作</span><span>发布</span><span class="on">运营</span></div>
+      <div class="titlebar-right"><span class="kbd">⌘K 搜索</span><span class="icon-btn">?</span><span class="icon-btn">⚙</span><span class="avatar">Z</span></div>
+    </div>
+    <div class="toolbar">
+      <div class="seg"><span class="on">本周</span><span>本月</span><span>近 90 天</span></div>
+      <span class="divider"></span>
+      <button class="tbtn outline">全部平台 ▾</button><button class="tbtn">内容类型 ▾</button>
+      <div class="toolbar-right"><button class="tbtn outline">导出 CSV</button><button class="primary">＋ 记录数据</button></div>
+    </div>
+    <div class="main ops">
+      <div class="panel">
+        <div class="panel-head"><h3>运营</h3></div>
+        <div class="ops-nav">
+          <div class="item on">▦ 概览</div><div class="item">▣ 日历</div><div class="item">▤ 内容库</div><div class="item">◔ 数据</div><div class="item">✎ 复盘</div>
+        </div>
+        <div style="margin-top:auto;padding:12px 14px;border-top:1px solid var(--line)"><div class="tiny muted">本周目标</div><div class="sm" style="font-weight:800;margin-top:4px">发布 5 篇 · 已完成 4</div><div style="height:5px;background:#e2e8f0;border-radius:9px;margin-top:8px;overflow:hidden"><div style="height:100%;width:80%;background:#2563eb;border-radius:9px"></div></div></div>
+      </div>
+
+      <div class="ops-content">
+        <div class="kpis">
+          <div class="kpi"><div class="tiny muted">本周发布</div><div class="n">4</div><div class="d"><span>较上周</span><span class="up">+2</span></div></div>
+          <div class="kpi"><div class="tiny muted">总阅读</div><div class="n">1.2w</div><div class="d"><span>较上周</span><span class="up">+18%</span></div></div>
+          <div class="kpi"><div class="tiny muted">平均互动</div><div class="n">6.8%</div><div class="d"><span>较上周</span><span class="down">-0.4%</span></div></div>
+          <div class="kpi"><div class="tiny muted">待复盘</div><div class="n">3</div><div class="d"><span>最久 5 天</span><span class="badge amber">提醒</span></div></div>
+        </div>
+        <div class="ops-grid">
+          <div class="box">
+            <h3>发布管道 <span class="tiny muted">本周</span></h3>
+            <div class="pipeline"><div class="bar" style="height:38%"><span>草稿 3</span></div><div class="bar" style="height:55%"><span>待发 4</span></div><div class="bar" style="height:82%"><span>已发 6</span></div><div class="bar" style="height:64%"><span>复盘 3</span></div><div class="bar" style="height:30%"><span>归档 1</span></div></div>
+          </div>
+          <div class="box">
+            <h3>本周排期 <span class="tiny muted">查看日历</span></h3>
+            <div class="schedule">
+              <div class="row"><div class="date">周三<b>22</b></div><div class="info"><b>把想法变成作品，我只用了 5 步</b><span>20:10 · 小红书 · 待发布</span></div><span class="badge blue">待发</span></div>
+              <div class="row"><div class="date">周五<b>24</b></div><div class="info"><b>5 个让封面更好点的习惯</b><span>12:00 · 公众号 · 已排期</span></div><span class="badge violet">排期</span></div>
+              <div class="row"><div class="date">周日<b>26</b></div><div class="info"><b>一张图讲清楚 Markdown</b><span>10:00 · 小红书 · 待复盘</span></div><span class="badge amber">复盘</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="ops-grid" style="flex:1.15">
+          <div class="box">
+            <h3>最近 7 天阅读 <span class="tiny muted">小红书 / 公众号</span></h3>
+            <div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding-top:8px">
+              <div class="bar" style="height:35%"><span>周一</span></div><div class="bar" style="height:52%"><span>周二</span></div><div class="bar" style="height:44%"><span>周三</span></div><div class="bar" style="height:78%"><span>周四</span></div><div class="bar" style="height:64%"><span>周五</span></div><div class="bar" style="height:58%"><span>周六</span></div><div class="bar" style="height:86%"><span>周日</span></div>
+            </div>
+          </div>
+          <div class="box">
+            <h3>表现最好 <span class="tiny muted">按互动率</span></h3>
+            <table class="mini-table"><tr><th>作品</th><th>阅读</th><th>互动</th></tr><tr><td>一张图讲清楚 Markdown</td><td>8,420</td><td class="up">9.8%</td></tr><tr><td>把想法变成作品</td><td>3,210</td><td>7.2%</td></tr><tr><td>5 个封面习惯</td><td>1,980</td><td class="down">4.1%</td></tr></table>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar"><span><span class="dot green"></span>数据已更新</span><span>微信数据：已同步</span><span>小红书：手动录入 3 篇</span><div class="right"><span>本周目标 4 / 5</span><span class="muted">⌘K 命令</span></div></div>
+  </div>
+</section>
+
+<!-- ================= OPS CALENDAR ================= -->
+<section class="screen" data-screen="ops-calendar">
+  <div class="app">
+    <div class="titlebar">
+      <div class="brand"><span class="logo">M</span><b>MarkCard Studio</b></div>
+      <div class="crumb">运营 <span>/</span> <b>内容日历</b></div>
+      <div class="mode-tabs"><span>创作</span><span>发布</span><span class="on">运营</span></div>
+      <div class="titlebar-right"><span class="kbd">⌘K 搜索</span><span class="icon-btn">?</span><span class="icon-btn">⚙</span><span class="avatar">Z</span></div>
+    </div>
+    <div class="toolbar">
+      <button class="tbtn outline">‹</button><button class="tbtn outline">今天</button><button class="tbtn outline">›</button>
+      <span class="divider"></span>
+      <div class="seg"><span class="on">月</span><span>周</span></div>
+      <button class="tbtn">全部平台 ▾</button>
+      <div class="toolbar-right"><button class="tbtn outline">导出 .ics</button><button class="primary">＋ 新建排期</button></div>
+    </div>
+    <div class="main ops">
+      <div class="panel">
+        <div class="panel-head"><h3>运营</h3></div>
+        <div class="ops-nav">
+          <div class="item">▦ 概览</div><div class="item on">▣ 日历</div><div class="item">▤ 内容库</div><div class="item">◔ 数据</div><div class="item">✎ 复盘</div>
+        </div>
+        <div style="margin-top:auto;padding:12px 14px;border-top:1px solid var(--line)"><div class="tiny muted">本月进度</div><div class="sm" style="font-weight:800;margin-top:4px">已发布 8 · 待发 4</div><div style="height:5px;background:#e2e8f0;border-radius:9px;margin-top:8px;overflow:hidden"><div style="height:100%;width:66%;background:#2563eb;border-radius:9px"></div></div><div class="tiny muted" style="margin-top:6px">错过排期 1 篇</div></div>
+      </div>
+      <div class="ops-content" style="gap:8px">
+        <div class="cal-toolbar"><div class="month">2026 年 10 月</div><span class="badge blue">小红书</span><span class="badge violet">公众号</span><span class="badge amber">待复盘</span><div style="margin-left:auto" class="tiny muted">拖拽卡片改期 · 点击空白新建</div></div>
+        <div class="cal-grid">
+          <div class="cal-dow">周一</div><div class="cal-dow">周二</div><div class="cal-dow">周三</div><div class="cal-dow">周四</div><div class="cal-dow">周五</div><div class="cal-dow">周六</div><div class="cal-dow">周日</div>
+
+          <div class="cal-cell out"><div class="cal-date">28</div><div class="cal-event green">9 月总结</div></div>
+          <div class="cal-cell out"><div class="cal-date">29</div></div>
+          <div class="cal-cell out"><div class="cal-date">30</div></div>
+          <div class="cal-cell"><div class="cal-date">1</div><div class="cal-event green">国庆选题</div></div>
+          <div class="cal-cell"><div class="cal-date">2</div></div>
+          <div class="cal-cell"><div class="cal-date">3</div><div class="cal-event blue">旅行图集</div></div>
+          <div class="cal-cell"><div class="cal-date">4</div></div>
+
+          <div class="cal-cell"><div class="cal-date">5</div></div>
+          <div class="cal-cell"><div class="cal-date">6</div><div class="cal-event violet">公众号长文</div></div>
+          <div class="cal-cell"><div class="cal-date">7</div></div>
+          <div class="cal-cell"><div class="cal-date">8</div><div class="cal-event blue">封面 A/B</div></div>
+          <div class="cal-cell"><div class="cal-date">9</div></div>
+          <div class="cal-cell"><div class="cal-date">10</div></div>
+          <div class="cal-cell"><div class="cal-date">11</div><div class="cal-event amber">待复盘</div></div>
+
+          <div class="cal-cell"><div class="cal-date">12</div><div class="cal-event violet">公众号图文</div></div>
+          <div class="cal-cell"><div class="cal-date">13</div></div>
+          <div class="cal-cell"><div class="cal-date">14</div><div class="cal-event blue">清单卡片</div></div>
+          <div class="cal-cell"><div class="cal-date">15</div><div class="cal-event blue">5 个封面习惯</div></div>
+          <div class="cal-cell"><div class="cal-date">16</div></div>
+          <div class="cal-cell"><div class="cal-date">17</div></div>
+          <div class="cal-cell"><div class="cal-date">18</div><div class="cal-event rose">错过：数据复盘</div><div class="cal-event blue">产品更新</div></div>
+
+          <div class="cal-cell"><div class="cal-date">19</div></div>
+          <div class="cal-cell"><div class="cal-date">20</div><div class="cal-event blue">把想法变成作品</div></div>
+          <div class="cal-cell"><div class="cal-date">21</div></div>
+          <div class="cal-cell today"><div class="cal-date">22 <span class="dot blue"></span></div><div class="cal-event blue">小红书 20:10</div><div class="cal-event violet">公众号 12:00</div></div>
+          <div class="cal-cell"><div class="cal-date">23</div></div>
+          <div class="cal-cell"><div class="cal-date">24</div><div class="cal-event violet">系列第 2 期</div></div>
+          <div class="cal-cell"><div class="cal-date">25</div></div>
+
+          <div class="cal-cell"><div class="cal-date">26</div><div class="cal-event amber">复盘</div></div>
+          <div class="cal-cell"><div class="cal-date">27</div></div>
+          <div class="cal-cell"><div class="cal-date">28</div></div>
+          <div class="cal-cell"><div class="cal-date">29</div><div class="cal-event green">月度总结</div></div>
+          <div class="cal-cell"><div class="cal-date">30</div></div>
+          <div class="cal-cell"><div class="cal-date">31</div></div>
+          <div class="cal-cell out"><div class="cal-date">1</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar"><span><span class="dot green"></span>日历已同步</span><span>本月 12 个排期</span><span>错过 1 个</span><div class="right"><span>拖拽改期</span><span class="muted">⌘K 命令</span></div></div>
+  </div>
+</section>
+
+<!-- ================= OPS REVIEW ================= -->
+<section class="screen" data-screen="ops-review">
+  <div class="app">
+    <div class="titlebar">
+      <div class="brand"><span class="logo">M</span><b>MarkCard Studio</b></div>
+      <div class="crumb">运营 <span>/</span> <b>复盘</b></div>
+      <div class="mode-tabs"><span>创作</span><span>发布</span><span class="on">运营</span></div>
+      <div class="titlebar-right"><span class="kbd">⌘K 搜索</span><span class="icon-btn">?</span><span class="icon-btn">⚙</span><span class="avatar">Z</span></div>
+    </div>
+    <div class="toolbar">
+      <div class="seg"><span class="on">本月</span><span>上月</span><span>近 90 天</span></div>
+      <span class="divider"></span>
+      <button class="tbtn outline">全部平台 ▾</button><button class="tbtn">标签 ▾</button>
+      <div class="toolbar-right"><button class="tbtn outline">导出复盘</button><button class="primary">＋ 新建复盘</button></div>
+    </div>
+    <div class="main ops">
+      <div class="panel">
+        <div class="panel-head"><h3>运营</h3></div>
+        <div class="ops-nav">
+          <div class="item">▦ 概览</div><div class="item">▣ 日历</div><div class="item">▤ 内容库</div><div class="item">◔ 数据</div><div class="item on">✎ 复盘</div>
+        </div>
+        <div style="margin-top:auto;padding:12px 14px;border-top:1px solid var(--line)"><div class="tiny muted">本月复盘</div><div class="sm" style="font-weight:800;margin-top:4px">6 篇已复盘 · 3 篇待复盘</div><div style="height:5px;background:#e2e8f0;border-radius:9px;margin-top:8px;overflow:hidden"><div style="height:100%;width:66%;background:#2563eb;border-radius:9px"></div></div></div>
+      </div>
+      <div class="ops-content">
+        <div style="display:flex;align-items:center;gap:8px"><div class="sm" style="font-weight:900">复盘</div><span class="badge amber">3 篇待复盘</span><span class="tiny muted">按发布时间排序</span><div style="margin-left:auto" class="tiny muted">标签：封面对比 · 标题数字 · CTA 位置</div></div>
+        <div class="review-layout">
+          <div class="review-list">
+            <div class="review-card on"><div class="cover grad1"></div><div class="body"><b>把想法变成作品，我只用了 5 步</b><span>小红书 · 10-20 · 阅读 3,210</span><div class="meta"><span class="badge green">已复盘</span><span class="badge blue">封面对比</span></div></div></div>
+            <div class="review-card"><div class="cover grad2"></div><div class="body"><b>一张图讲清楚 Markdown</b><span>小红书 · 10-18 · 阅读 8,420</span><div class="meta"><span class="badge green">已复盘</span><span class="badge violet">标题数字</span></div></div></div>
+            <div class="review-card"><div class="cover grad3"></div><div class="body"><b>5 个让封面更好点的习惯</b><span>公众号 · 10-15 · 阅读 1,980</span><div class="meta"><span class="badge amber">待复盘</span><span class="badge blue">封面对比</span></div></div></div>
+            <div class="review-card"><div class="cover grad4"></div><div class="body"><b>产品更新：素材库上线</b><span>公众号 · 10-12 · 阅读 960</span><div class="meta"><span class="badge amber">待复盘</span></div></div></div>
+            <div class="review-card"><div class="cover grad5"></div><div class="body"><b>我不会再这样写标题了</b><span>小红书 · 10-08 · 阅读 2,140</span><div class="meta"><span class="badge green">已复盘</span><span class="badge violet">标题数字</span></div></div></div>
+          </div>
+          <div class="review-detail">
+            <div class="head"><div class="cover grad1"></div><div style="min-width:0"><div class="sm" style="font-weight:900;line-height:1.3">把想法变成作品，我只用了 5 步</div><div class="tiny muted" style="margin-top:4px">小红书 · 2026-10-20 20:10 · 已发布</div><div style="display:flex;gap:4px;margin-top:7px"><span class="badge green">已复盘</span><span class="badge blue">封面对比</span><span class="badge violet">系列第 2 期</span></div></div></div>
+            <div class="review-metrics">
+              <div class="review-metric"><div class="tiny muted">阅读</div><div class="n">3,210</div></div>
+              <div class="review-metric"><div class="tiny muted">点赞</div><div class="n">186</div></div>
+              <div class="review-metric"><div class="tiny muted">收藏</div><div class="n">420</div></div>
+              <div class="review-metric"><div class="tiny muted">互动率</div><div class="n">7.2%</div></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+              <div class="review-note"><div class="t">亮点</div><div class="c">封面对比强；标题有数字；前 2 行给结论。</div></div>
+              <div class="review-note"><div class="t">问题</div><div class="c">第 5 页信息太密；CTA 出现太晚。</div></div>
+              <div class="review-note"><div class="t">假设</div><div class="c">下次把 CTA 放第 2 页，封面换手部/真人。</div></div>
+              <div class="review-note"><div class="t">下一步</div><div class="c">模板 A + 标题公式 B；周三 20:00 再发一次。</div></div>
+            </div>
+            <div class="review-note" style="flex:1;min-height:0;display:flex;flex-direction:column">
+              <div class="t">同系列对比</div>
+              <div style="display:flex;align-items:flex-end;gap:12px;height:76px;padding:0 6px">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;height:60px;background:linear-gradient(180deg,#93c5fd,#bfdbfe);border-radius:4px 4px 2px 2px"></div><span class="tiny muted">第 1 期</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;height:34px;background:linear-gradient(180deg,#c4b5fd,#ddd6fe);border-radius:4px 4px 2px 2px"></div><span class="tiny muted">第 2 期</span></div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;height:20px;background:linear-gradient(180deg,#fde68a,#fef3c7);border-radius:4px 4px 2px 2px"></div><span class="tiny muted">第 3 期</span></div>
+              </div>
+              <div class="tiny muted" style="margin-top:2px">第 1 期阅读 8,420 · 第 2 期 3,210 · 第 3 期待发布</div>
+            </div>
+            <div style="margin-top:auto;display:flex;gap:6px"><button class="btn" style="flex:1">编辑复盘</button><button class="btn blue" style="flex:1">派生下一期 →</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="statusbar"><span><span class="dot green"></span>复盘已保存</span><span>本月 6 篇已复盘</span><span>3 篇待复盘</span><div class="right"><span>导出 Markdown / CSV</span><span class="muted">⌘K 命令</span></div></div>
+  </div>
+</section>
+
+<!-- ================= ASSETS OVERLAY ================= -->
+<section class="screen" data-screen="assets">
+  <div class="app">
+    <div class="shell-for-overlay">
+      <div class="titlebar"><div class="brand"><span class="logo">M</span><b>MarkCard Studio</b></div><div class="crumb">我的作品 <span>/</span> <b>把今天的想法变成作品</b></div><div class="mode-tabs"><span class="on">创作</span><span>发布</span><span>运营</span></div><div class="titlebar-right"><span class="kbd">⌘K 搜索</span><span class="icon-btn">⚙</span><span class="avatar">Z</span></div></div>
+      <div class="toolbar"><button class="tbtn outline">＋ 新建</button><button class="tbtn">打开</button><button class="tbtn">保存</button><span class="divider"></span><div class="seg"><span>写作</span><span class="on">图集</span><span>海报</span></div><div class="toolbar-right"><button class="tbtn outline">主题：瑞士网格 ▾</button><button class="tbtn outline">▦ 素材</button><button class="primary">发布作品 →</button></div></div>
+      <div class="main create" style="opacity:.55">
+        <div class="panel"><div class="panel-head"><h3>页面</h3></div><div class="page-list"><div class="page-item"><div class="page-thumb grad1"></div><div class="page-meta"><b>封面</b><span>3:4</span></div></div><div class="page-item on"><div class="page-thumb grad2"></div><div class="page-meta"><b>先写，再排版</b><span>3:4</span></div></div><div class="page-item"><div class="page-thumb grad3"></div><div class="page-meta"><b>让图片说话</b><span>3:4</span></div></div></div></div>
+        <div class="panel"><div class="canvas-head"><span class="title">图集</span></div><div class="canvas-stage"><div class="card" style="width:320px;height:420px"><h1 style="font-size:24px">先写，<br/>再排版。</h1><div class="grid2"><div class="img grad2"></div><div class="img grad3"></div></div></div></div></div>
+        <div class="panel"><div class="panel-head"><h3>Inspector</h3></div></div>
+      </div>
+      <div class="dim"></div>
+      <div class="overlay">
+        <div class="overlay-head">
+          <h2>素材库</h2>
+          <div class="search">⌕ 搜索文件名、标签、提示词…</div>
+          <div class="filters"><span class="chip on">全部</span><span class="chip">AI 生成</span><span class="chip">未使用</span><span class="chip">最近</span></div>
+          <div style="margin-left:auto;display:flex;gap:7px"><button class="btn">导入</button><button class="btn blue">✨ 生成（后期）</button></div>
+        </div>
+        <div class="overlay-body">
+          <div class="collections">
+            <div class="item on">本项目 <span>12</span></div><div class="item">全部素材 <span>128</span></div><div class="item">最近使用 <span>24</span></div><div class="item">未使用 <span>18</span></div><div class="item">AI 生成 <span>32</span></div><div class="item">收藏 <span>9</span></div><div class="item">回收站 <span>3</span></div>
+            <div class="label" style="margin:14px 0 4px">标签</div><div class="item">封面 <span>16</span></div><div class="item">暖色 <span>21</span></div><div class="item">截图 <span>12</span></div>
+          </div>
+          <div class="asset-grid">
+            <div class="asset sel"><div class="im grad1"></div><div class="cap">封面-暖纸.jpg</div><span class="check">✓</span><span class="ai badge violet">AI</span></div>
+            <div class="asset"><div class="im grad2"></div><div class="cap">蓝调-网格.png</div></div>
+            <div class="asset"><div class="im grad3"></div><div class="cap">紫粉渐变.jpg</div></div>
+            <div class="asset sel"><div class="im grad4"></div><div class="cap">绿洲-纹理.png</div><span class="check">✓</span></div>
+            <div class="asset"><div class="im grad5"></div><div class="cap">玫瑰-静物.jpg</div></div>
+            <div class="asset"><div class="im grad6"></div><div class="cap">灰阶-截图.png</div></div>
+            <div class="asset"><div class="im grad7"></div><div class="cap">暖橙-纸张.jpg</div></div>
+            <div class="asset"><div class="im grad8"></div><div class="cap">青色-水纹.png</div></div>
+            <div class="asset"><div class="im grad9"></div><div class="cap">紫罗兰-光晕.jpg</div></div>
+            <div class="asset"><div class="im grad10"></div><div class="cap">洋红-噪点.png</div></div>
+            <div class="asset"><div class="im grad11"></div><div class="cap">薄荷-几何.jpg</div></div>
+            <div class="asset"><div class="im grad12"></div><div class="cap">橙红-拼贴.png</div></div>
+          </div>
+          <div class="detail">
+            <div class="label" style="margin:0">详情 <span class="tiny muted">2 张已选</span></div>
+            <div class="big grad1"></div>
+            <div style="font-weight:800;font-size:12px">封面-暖纸.jpg</div>
+            <div class="row"><span>尺寸</span><b>1080 × 1440</b></div><div class="row"><span>体积</span><b>812 KB</b></div><div class="row"><span>来源</span><b>Jaaz · GPT-Image</b></div><div class="row"><span>版权</span><b>自制</b></div><div class="row"><span>使用于</span><b>2 个作品</b></div>
+            <div class="tiny muted" style="line-height:1.6">提示词：editorial still life, warm paper, soft shadow, no text</div>
+            <div style="display:flex;gap:6px;margin-top:auto"><button class="btn" style="flex:1">替换</button><button class="btn blue" style="flex:1">插入当前页</button></div>
+          </div>
+        </div>
+        <div class="overlay-foot"><span>已选 2 项</span><button class="btn" style="height:26px">加标签</button><button class="btn" style="height:26px">导出</button><button class="btn" style="height:26px">归档</button><div class="right"><span class="tiny muted">拖拽到画布 / 编辑器即可使用</span><button class="btn ghost" style="height:26px">关闭</button></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ASSETS LIST / BATCH ================= -->
+<section class="screen" data-screen="assets-list">
+  <div class="app">
+    <div class="shell-for-overlay">
+      <div class="titlebar"><div class="brand"><span class="logo">M</span><b>MarkCard Studio</b></div><div class="crumb">我的作品 <span>/</span> <b>把今天的想法变成作品</b></div><div class="mode-tabs"><span class="on">创作</span><span>发布</span><span>运营</span></div><div class="titlebar-right"><span class="kbd">⌘K 搜索</span><span class="icon-btn">⚙</span><span class="avatar">Z</span></div></div>
+      <div class="toolbar"><button class="tbtn outline">＋ 新建</button><button class="tbtn">打开</button><button class="tbtn">保存</button><span class="divider"></span><div class="seg"><span>写作</span><span class="on">图集</span><span>海报</span></div><div class="toolbar-right"><button class="tbtn outline">主题：瑞士网格 ▾</button><button class="tbtn outline">▦ 素材</button><button class="primary">发布作品 →</button></div></div>
+      <div class="main create" style="opacity:.45">
+        <div class="panel"><div class="panel-head"><h3>页面</h3></div><div class="page-list"><div class="page-item"><div class="page-thumb grad1"></div><div class="page-meta"><b>封面</b><span>3:4</span></div></div><div class="page-item on"><div class="page-thumb grad2"></div><div class="page-meta"><b>先写，再排版</b><span>3:4</span></div></div></div></div>
+        <div class="panel"><div class="canvas-head"><span class="title">图集</span></div><div class="canvas-stage"><div class="card" style="width:320px;height:420px"><h1 style="font-size:24px">先写，<br/>再排版。</h1><div class="grid2"><div class="img grad2"></div><div class="img grad3"></div></div></div></div></div>
+        <div class="panel"><div class="panel-head"><h3>Inspector</h3></div></div>
+      </div>
+      <div class="dim"></div>
+      <div class="overlay">
+        <div class="overlay-head">
+          <h2>素材库</h2>
+          <div class="search">⌕ 搜索文件名、标签、提示词…</div>
+          <div class="filters"><span class="chip on">全部</span><span class="chip">AI 生成</span><span class="chip">未使用</span><span class="chip">最近</span></div>
+          <div style="margin-left:auto;display:flex;gap:7px;align-items:center">
+            <div class="seg" style="background:#f8fafc"><span>网格</span><span class="on">列表</span></div>
+            <button class="btn">导入</button><button class="btn blue">✨ 生成</button>
+          </div>
+        </div>
+        <div class="overlay-body" style="grid-template-columns:190px minmax(0,1fr) 300px">
+          <div class="collections">
+            <div class="item on">本项目 <span>12</span></div><div class="item">全部素材 <span>128</span></div><div class="item">最近使用 <span>24</span></div><div class="item">未使用 <span>18</span></div><div class="item">AI 生成 <span>32</span></div><div class="item">收藏 <span>9</span></div><div class="item">回收站 <span>3</span></div>
+            <div class="label" style="margin:14px 0 4px">标签</div><div class="item">封面 <span>16</span></div><div class="item">暖色 <span>21</span></div><div class="item">截图 <span>12</span></div>
+            <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:10px"><div class="tiny muted">存储</div><div class="sm" style="font-weight:800;margin-top:2px">1.8 GB / 5 GB</div><div style="height:5px;background:#e2e8f0;border-radius:9px;margin-top:6px;overflow:hidden"><div style="height:100%;width:36%;background:#2563eb;border-radius:9px"></div></div><div class="tiny muted" style="margin-top:6px">未使用 18 张 · 可释放 240 MB</div></div>
+          </div>
+          <div class="asset-table-wrap">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span class="badge blue">已选 12 项</span><span class="tiny muted">按更新时间排序</span><span style="margin-left:auto" class="tiny muted">128 个素材</span></div>
+            <table class="asset-table">
+              <colgroup><col style="width:30px"><col style="width:200px"><col style="width:82px"><col style="width:62px"><col style="width:92px"><col style="width:52px"><col style="width:78px"></colgroup>
+              <thead><tr><th><span class="cb on">✓</span></th><th>素材</th><th>尺寸</th><th>体积</th><th>来源</th><th>使用</th><th>更新时间</th></tr></thead>
+              <tbody>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad1"></span><span>封面-暖纸.jpg</span><span class="badge violet" style="font-size:8px">AI</span></div></td><td>1080×1440</td><td>812 KB</td><td>Jaaz</td><td>2</td><td>10-20 15:31</td></tr>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad2"></span><span>蓝调-网格.png</span></div></td><td>1080×1440</td><td>1.2 MB</td><td>导入</td><td>1</td><td>10-20 14:08</td></tr>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad3"></span><span>紫粉渐变.jpg</span></div></td><td>1080×1440</td><td>640 KB</td><td>内置</td><td>0</td><td>10-20 12:20</td></tr>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad4"></span><span>绿洲-纹理.png</span></div></td><td>1080×1080</td><td>980 KB</td><td>Jaaz</td><td>3</td><td>10-19 22:11</td></tr>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad5"></span><span>玫瑰-静物.jpg</span><span class="badge amber" style="font-size:8px">未使用</span></div></td><td>1200×1600</td><td>2.1 MB</td><td>导入</td><td>0</td><td>10-19 18:40</td></tr>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad6"></span><span>灰阶-截图.png</span></div></td><td>1440×900</td><td>420 KB</td><td>截图</td><td>1</td><td>10-19 16:02</td></tr>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad7"></span><span>暖橙-纸张.jpg</span></div></td><td>1080×1440</td><td>760 KB</td><td>Jaaz</td><td>2</td><td>10-18 20:15</td></tr>
+                <tr class="sel"><td><span class="cb on">✓</span></td><td><div style="display:flex;align-items:center;gap:7px"><span class="thumb grad8"></span><span>青色-水纹.png</span><span class="badge amber" style="font-size:8px">未使用</span></div></td><td>1080×1440</td><td>1.6 MB</td><td>导入</td><td>0</td><td>10-18 11:24</td></tr>
+              </tbody>
+            </table>
+            <div class="tiny muted" style="margin-top:auto;padding-top:8px">列表视图适合批量管理：排序、全选、批量标签、压缩、归档。</div>
+          </div>
+          <div class="detail">
+            <div class="label" style="margin:0">批量操作 <span class="tiny muted">12 项已选</span></div>
+            <div class="batch-summary"><b>12</b> <span class="tiny">项 · 8.4 MB</span><div class="tiny" style="margin-top:4px;color:#1d4ed8">其中 2 项被 3 个作品使用</div></div>
+            <div class="field"><div class="label">加标签</div><div class="control" style="color:#94a3b8">输入标签，回车添加…</div></div>
+            <div class="field"><div class="label">移动到合集</div><div class="control">封面素材 ▾</div></div>
+            <div class="batch-actions">
+              <button class="btn">压缩到 80%</button><button class="btn">转换 WebP</button>
+              <button class="btn">导出 ZIP</button><button class="btn">归档</button>
+            </div>
+            <button class="btn danger" style="margin-top:8px">删除 12 项</button>
+            <div class="tiny muted" style="margin-top:6px;line-height:1.5">删除前会检查引用；被引用的素材默认只能归档。</div>
+            <div style="margin-top:auto;border-top:1px solid var(--line);padding-top:10px"><div class="label" style="margin-bottom:6px">清理建议 <span class="tiny muted">查看全部</span></div><div class="tiny muted" style="line-height:1.8">未使用 18 张 · 可释放 240 MB<br/>重复 3 组 · 可合并<br/>超大 5 张 · 建议压缩</div><button class="btn ghost" style="width:100%;margin-top:7px;height:28px">一键清理</button></div>
+          </div>
+        </div>
+        <div class="overlay-foot"><span><b style="color:#1d4ed8">已选 12 项</b> · 8.4 MB</span><button class="btn" style="height:26px">加标签</button><button class="btn" style="height:26px">导出</button><button class="btn" style="height:26px">压缩</button><button class="btn danger" style="height:26px">删除</button><div class="right"><span class="tiny muted">拖拽到画布 / 编辑器即可使用</span><button class="btn ghost" style="height:26px">关闭</button></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

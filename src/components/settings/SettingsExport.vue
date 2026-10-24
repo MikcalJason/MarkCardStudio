@@ -33,13 +33,27 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  exportAction: {
+    type: String,
+    default: "",
+  },
 });
+
+// Only the button that started the run spins; the shared flag just disables all
+// of them so two exports can never overlap.
+const isDocumentExporting = computed(
+  () => props.isExporting && props.exportAction === "document",
+);
+const isLibraryExporting = computed(
+  () => props.isExporting && props.exportAction === "library",
+);
 
 const emit = defineEmits([
   "export",
   "select-format",
   "set-scale",
   "set-export-path",
+  "export-to-library",
 ]);
 
 const isCollapsed = ref(false);
@@ -115,8 +129,8 @@ async function handleOpenExportFolder() {
           :disabled="isExporting"
           @click.stop="$emit('export')"
         >
-          <AppIcon :name="isExporting ? 'loader' : 'download'" :size="11" :class="{ 'animate-spin': isExporting }" />
-          {{ isExporting ? t("toolbar.exporting") : t("toolbar.export") }}
+          <AppIcon :name="isDocumentExporting ? 'loader' : 'download'" :size="11" :class="{ 'animate-spin': isDocumentExporting }" />
+          {{ isDocumentExporting ? t("toolbar.exporting") : t("toolbar.export") }}
         </button>
 
         <button
@@ -168,7 +182,7 @@ async function handleOpenExportFolder() {
           <div v-if="selectedFormat === 'JPG' || selectedFormat === 'PDF'">
             <label class="mb-1.5 block text-xs font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
               {{ t("publish.quality") }}
-              <span class="ml-1 font-normal text-slate-400 dark:text-slate-500 text-[11px]">({{ t("publish.qualityHint") }})</span>
+              <span class="ml-1 font-normal text-slate-500 dark:text-slate-400 text-[11px]">({{ t("publish.qualityHint") }})</span>
             </label>
             <div class="grid grid-cols-3 gap-2">
               <button
@@ -221,10 +235,22 @@ async function handleOpenExportFolder() {
               :disabled="isExporting"
               @click="$emit('export')"
             >
-              <AppIcon :name="isExporting ? 'loader' : 'download'" :size="15" class="transition-transform group-hover:-translate-y-0.5 shrink-0" :class="{ 'animate-spin': isExporting }" />
-              <span class="whitespace-nowrap">{{ isExporting ? t("toolbar.exporting") : mainButtonText }}</span>
+              <AppIcon :name="isDocumentExporting ? 'loader' : 'download'" :size="15" class="transition-transform group-hover:-translate-y-0.5 shrink-0" :class="{ 'animate-spin': isDocumentExporting }" />
+              <span class="whitespace-nowrap">{{ isDocumentExporting ? t("toolbar.exporting") : mainButtonText }}</span>
             </button>
           </div>
+
+          <!-- Store rendered pages in the asset library instead of the disk -->
+          <button
+            type="button"
+            class="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 shadow-2xs transition-all duration-150 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            :disabled="isExporting"
+            :title="t('publish.exportToLibraryHint')"
+            @click="$emit('export-to-library')"
+          >
+            <AppIcon :name="isLibraryExporting ? 'loader' : 'image-plus'" :size="14" :class="{ 'animate-spin': isLibraryExporting }" />
+            <span>{{ t("publish.exportToLibrary") }}</span>
+          </button>
 
           <!-- Export Message Toast with Open Directory Button -->
           <div

@@ -250,7 +250,7 @@ onUnmounted(() => {
         <h3 class="text-xs font-bold text-slate-800 dark:text-slate-200">
           {{ t("publish.fonts.library") }}
         </h3>
-        <span class="text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+        <span class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
           {{ customFonts.length }}
         </span>
       </div>

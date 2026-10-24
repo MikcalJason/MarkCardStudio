@@ -792,7 +792,7 @@ fn is_remote_or_data_url(path: &str) -> bool {
         || lower.starts_with("blob:")
 }
 
-fn expand_tilde(app: &AppHandle, path: &Path) -> PathBuf {
+pub(crate) fn expand_tilde(app: &AppHandle, path: &Path) -> PathBuf {
     let path_string = path.to_string_lossy();
     if path_string == "~" {
         return app.path().home_dir().unwrap_or_else(|_| path.to_path_buf());
@@ -807,7 +807,7 @@ fn expand_tilde(app: &AppHandle, path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-fn display_path(path: &Path) -> String {
+pub(crate) fn display_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 

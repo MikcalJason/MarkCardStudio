@@ -3,8 +3,16 @@ import { useI18n } from "vue-i18n";
 import { APP_INFO } from "../config/appInfo.js";
 import { useUpdater } from "../composables/useUpdater.js";
 import AppIcon from "./AppIcon.vue";
+import WorkspaceSwitcher from "./WorkspaceSwitcher.vue";
 
-defineEmits(["open-settings"]);
+defineProps({
+  activeWorkspace: {
+    type: String,
+    default: "create",
+  },
+});
+
+const emit = defineEmits(["open-settings", "select-workspace"]);
 const { t } = useI18n();
 const { isChecking, updateAvailable, isUpToDate, checkForUpdates } = useUpdater();
 </script>
@@ -12,7 +20,7 @@ const { isChecking, updateAvailable, isUpToDate, checkForUpdates } = useUpdater(
 <template>
   <header
     class="flex min-h-[64px] shrink-0 items-center justify-between border-b border-slate-200/70 bg-white/90 px-6 py-3.5 backdrop-blur-[18px] dark:border-slate-800/80 dark:bg-slate-950/90 dark:text-slate-100">
-    <div class="inline-flex items-center gap-3">
+    <div class="inline-flex min-w-0 items-center gap-3">
       <span class="brand-logo shrink-0">
         <img src="/logo.png" alt="MarkCard Studio" width="28" height="28" />
       </span>
@@ -20,11 +28,17 @@ const { isChecking, updateAvailable, isUpToDate, checkForUpdates } = useUpdater(
         <strong class="text-[16px] font-extrabold tracking-tight text-slate-900 dark:text-slate-100">
           MarkCard Studio
         </strong>
-        <span class="text-[10px] font-medium font-mono text-slate-400 dark:text-slate-500">
+        <span class="text-[11px] font-medium font-mono text-slate-500 dark:text-slate-400">
           v{{ APP_INFO.version }}
         </span>
       </div>
     </div>
+
+    <WorkspaceSwitcher
+      class="shrink-0"
+      :model-value="activeWorkspace"
+      @update:model-value="emit('select-workspace', $event)"
+    />
 
     <!-- Top Right Actions: Distinct Check for Updates + Settings -->
     <div class="inline-flex items-center gap-2.5">
@@ -75,7 +89,7 @@ const { isChecking, updateAvailable, isUpToDate, checkForUpdates } = useUpdater(
         @click="$emit('open-settings')"
       >
         <AppIcon name="settings" :size="15" class="text-slate-500 dark:text-slate-400" />
-        <span>{{ t("toolbar.settings") }}</span>
+        <span class="hidden sm:inline">{{ t("toolbar.settings") }}</span>
       </button>
     </div>
   </header>

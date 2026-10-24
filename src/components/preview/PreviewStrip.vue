@@ -1,6 +1,7 @@
 <script setup>
 import { useI18n } from "vue-i18n";
 import AppIcon from "../AppIcon.vue";
+import CoverDesignArtwork from "../cover/CoverDesignArtwork.vue";
 
 const { t } = useI18n();
 
@@ -28,7 +29,47 @@ defineEmits(["add-page", "select-page"]);
       @click="$emit('select-page', index)"
     >
       <!-- Thumbnail Card Box -->
-      <div class="relative h-20 w-full overflow-hidden rounded-lg bg-[#fff7e9] dark:bg-slate-800/90 p-2 shadow-inner flex flex-col justify-between">
+      <div
+        v-if="page.coverDesign"
+        class="relative h-20 w-full overflow-hidden rounded-lg bg-slate-900 shadow-inner"
+      >
+        <CoverDesignArtwork :design="page.coverDesign" compact />
+        <span class="absolute inset-x-1 bottom-1 rounded bg-slate-950/50 px-1 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm">
+          {{ page.label }}
+        </span>
+      </div>
+
+      <div
+        v-else-if="page.gallery"
+        class="relative h-20 w-full overflow-hidden rounded-lg bg-slate-900 shadow-inner"
+      >
+        <img
+          v-if="page.gallery.src"
+          :src="page.gallery.src"
+          :alt="page.gallery.alt || page.gallery.caption || ''"
+          class="h-full w-full object-cover"
+        />
+        <div v-else class="flex h-full flex-col items-center justify-center gap-1 text-[10px] text-slate-400">
+          <AppIcon name="image" :size="16" />
+          <span>{{ page.gallery.empty ? page.gallery.title : $t("gallery.missingImage") }}</span>
+        </div>
+        <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/80 to-transparent px-1.5 pb-1 pt-4">
+          <strong v-if="page.cover && page.title" class="block truncate text-[10px] font-bold text-white">
+            {{ page.gallery.empty ? page.gallery.title : page.title }}
+          </strong>
+          <span v-else-if="page.gallery.caption" class="block truncate text-[10px] text-white/85">
+            {{ page.gallery.caption }}
+          </span>
+          <span v-else class="block truncate text-[10px] text-white/70">
+            {{ page.gallery.index + 1 }} / {{ page.gallery.total }}
+          </span>
+        </div>
+      </div>
+
+      <div
+        v-else
+        class="relative h-20 w-full overflow-hidden rounded-lg bg-[#fff7e9] dark:bg-slate-800/90 p-2 shadow-inner flex flex-col justify-between"
+      >
         <div>
           <span class="text-[10px] font-bold text-amber-800 dark:text-amber-300 leading-tight block truncate">{{ page.kicker }}</span>
           <strong class="text-xs font-semibold text-slate-900 dark:text-slate-100 leading-tight block truncate mt-0.5">{{ page.title }}</strong>

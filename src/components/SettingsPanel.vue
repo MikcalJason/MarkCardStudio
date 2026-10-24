@@ -33,6 +33,10 @@ defineProps({
     type: Boolean,
     default: false,
   },
+  exportAction: {
+    type: String,
+    default: "",
+  },
   pagesLength: {
     type: Number,
     required: true,
@@ -145,6 +149,10 @@ defineProps({
     type: String,
     default: "/Users/markcardstudio/导出",
   },
+  embedded: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 defineEmits([
@@ -175,16 +183,23 @@ defineEmits([
   "update:showTopRight",
   "update:showBottomLeft",
   "update:showBottomRight",
+  "export-to-library",
 ]);
 </script>
 
 <template>
-  <aside class="panel-surface flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl">
-    <section class="shrink-0 border-b border-slate-200/70 dark:border-slate-800 px-4 py-3">
+  <aside
+    :class="
+      embedded
+        ? 'flex min-w-0 flex-col'
+        : 'panel-surface flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl'
+    "
+  >
+    <section v-if="!embedded" class="shrink-0 border-b border-slate-200/70 dark:border-slate-800 px-4 py-3">
       <h2 class="text-[15px] font-semibold dark:text-slate-100">{{ $t("publish.title") }}</h2>
     </section>
 
-    <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div :class="embedded ? 'flex min-w-0 flex-col' : 'flex min-h-0 flex-1 flex-col overflow-hidden'">
       <SettingsTabs
         class="mx-4 mt-3 shrink-0 relative z-20"
         :active-tab="activeTab"
@@ -192,7 +207,7 @@ defineEmits([
         @set-active-tab="$emit('set-active-tab', $event)"
       />
 
-      <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div :class="embedded ? 'px-4 py-4' : 'min-h-0 flex-1 overflow-y-auto px-4 py-4'">
         <!-- 平台设置 Tab -->
         <div v-if="activeTab === '平台'" class="space-y-4">
           <SettingsPlatforms
@@ -275,6 +290,7 @@ defineEmits([
       class="shrink-0 border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900"
       :export-formats="exportFormats"
       :export-message="exportMessage"
+      :export-action="exportAction"
       :is-exporting="isExporting"
       :pages-length="pagesLength"
       :scale="scale"
@@ -284,6 +300,7 @@ defineEmits([
       @select-format="$emit('select-format', $event)"
       @set-scale="$emit('set-scale', $event)"
       @set-export-path="$emit('set-export-path', $event)"
+      @export-to-library="$emit('export-to-library')"
     />
   </aside>
 </template>

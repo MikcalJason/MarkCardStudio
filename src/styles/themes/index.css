@@ -4,6 +4,8 @@
  */
 
 @import "./base-card.css";
+@import "./card-gallery.css";
+@import "./cover-design.css";
 @import "./cover-stickers.css";
 @import "./theme-warm.css";
 @import "./theme-fresh.css";

@@ -33,21 +33,55 @@ body {
   margin: 0;
 }
 
-button {
-  color: inherit;
-  font: inherit;
-  background: transparent;
-  cursor: pointer;
+/* Layered so Tailwind utilities (later layers) can override these resets. */
+@layer base {
+  button {
+    color: inherit;
+    font: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  button:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #6354f4;
+    outline-offset: 2px;
+  }
+
+  button:hover {
+    filter: brightness(0.98);
+  }
 }
 
-button:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid #6354f4;
-  outline-offset: 2px;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
-button:hover {
-  filter: brightness(0.98);
+/* Overlay ladder: popover < drawer < dialog < dialog-raised < system.
+   Drawer scrims keep z-40 and drawers z-50 from App.vue. */
+@layer utilities {
+  .z-popover {
+    z-index: 40;
+  }
+
+  .z-dialog {
+    z-index: 60;
+  }
+
+  .z-dialog-raised {
+    z-index: 70;
+  }
+
+  .z-system {
+    z-index: 80;
+  }
 }
 
 .file-input {

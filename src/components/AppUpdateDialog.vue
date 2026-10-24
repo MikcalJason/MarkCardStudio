@@ -25,7 +25,7 @@ const bodyText = computed(() => updateInfo.value?.body || "");
     <!-- Floating Toast Notification for Check Feedback -->
     <div
       v-if="toastNotice"
-      class="fixed top-5 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2.5 rounded-full px-4 py-2.5 text-xs font-semibold shadow-xl border backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-4 duration-200"
+      class="fixed top-5 left-1/2 -translate-x-1/2 z-system flex items-center gap-2.5 rounded-full px-4 py-2.5 text-xs font-semibold shadow-xl border backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-4 duration-200"
       :class="[
         toastNotice.type === 'success'
           ? 'bg-emerald-600 text-white border-emerald-500 shadow-emerald-600/20'
@@ -44,7 +44,7 @@ const bodyText = computed(() => updateInfo.value?.body || "");
     <!-- Update Available Modal -->
     <div
       v-if="updateAvailable"
-      class="fixed inset-0 z-[120] grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm animate-in fade-in duration-200"
+      class="fixed inset-0 z-dialog-raised grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm animate-in fade-in duration-200"
     >
       <section
         class="w-[min(480px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"

@@ -14,6 +14,10 @@ const props = defineProps({
     type: Number,
     required: true,
   },
+  assetCount: {
+    type: Number,
+    default: 0,
+  },
   autoSaveStatus: {
     type: String,
     default: "已开启",
@@ -79,7 +83,7 @@ async function handleSponsorClick(event) {
       <span class="text-xs sm:text-sm font-medium transition-colors">{{ t("statusbar.autosave") }}: {{ autoSaveStatus }}</span>
     </div>
 
-    <div class="absolute left-1/2 inline-flex h-10 -translate-x-1/2 items-center gap-3.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-slate-200 px-4 shadow-2xs">
+    <div class="absolute left-1/2 hidden h-10 -translate-x-1/2 items-center gap-3.5 rounded-lg lg:flex border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 dark:text-slate-200 px-4 shadow-2xs">
       <span class="whitespace-nowrap">{{ t("statusbar.canvasSize") }}: {{ canvasSizeLabel }}</span>
       <div class="h-3.5 w-px bg-slate-200 dark:bg-slate-700"></div>
 
@@ -113,6 +117,8 @@ async function handleSponsorClick(event) {
       </template>
       <template v-else>
         <span class="whitespace-nowrap">{{ t("statusbar.estimatedExport") }}: {{ t("common.imageCount", { count: pagesLength }) }}</span>
+        <div class="h-3.5 w-px bg-slate-200 dark:bg-slate-700"></div>
+        <span class="whitespace-nowrap">{{ t("statusbar.assets", { count: assetCount }) }}</span>
       </template>
 
       <div class="group relative flex items-center shrink-0">
@@ -133,7 +139,7 @@ async function handleSponsorClick(event) {
       </div>
     </div>
 
-    <div class="inline-flex items-center">
+    <div class="hidden items-center sm:flex">
       <a
         :href="SPONSOR_URL"
         target="_blank"

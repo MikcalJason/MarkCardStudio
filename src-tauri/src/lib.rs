@@ -1,4 +1,8 @@
+mod assets;
+mod channels;
 mod files;
+mod publish;
+mod wechat;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -83,10 +87,30 @@ pub fn run() {
             files::get_default_export_folder,
             files::save_export_file,
             files::open_export_folder,
+            publish::bundle::begin_publish_bundle,
+            publish::bundle::append_publish_bundle_file,
+            publish::bundle::finish_publish_bundle,
+            publish::bundle::cancel_publish_bundle,
             files::import_custom_font,
             files::list_custom_fonts,
             files::read_custom_font,
             files::delete_custom_font,
+            assets::pick_asset_files,
+            assets::pick_asset_folder,
+            assets::scan_image_folder,
+            channels::set_channel_credentials,
+            channels::channel_credentials_status,
+            channels::clear_channel_credentials,
+            channels::test_channel_credentials,
+            channels::fetch_public_ip,
+            channels::probe_channel_permissions,
+            wechat::publish_wechat_draft_from_bundle,
+            assets::read_asset_library,
+            assets::write_asset_library,
+            assets::store_asset_file,
+            assets::read_asset_file,
+            assets::mirror_asset,
+            assets::delete_asset_file,
             exit_application
         ])
         .build(tauri::generate_context!())

@@ -396,7 +396,7 @@ onBeforeUnmount(() => {
         <div
           v-if="activeDropdown === 'heading'"
           ref="dropdownMenuRef"
-          class="fixed z-[9999] min-w-[175px] rounded-xl border border-slate-200/90 bg-white/98 p-1.5 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200"
+          class="fixed z-popover min-w-[175px] rounded-xl border border-slate-200/90 bg-white/98 p-1.5 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200"
           :style="{ top: `${dropdownPos.top}px`, left: `${dropdownPos.left}px` }"
           @mousedown.prevent
         >
@@ -434,7 +434,7 @@ onBeforeUnmount(() => {
         <div
           v-if="activeDropdown === 'callout'"
           ref="dropdownMenuRef"
-          class="fixed z-[9999] min-w-[150px] rounded-xl border border-slate-200/90 bg-white/98 p-1.5 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200"
+          class="fixed z-popover min-w-[150px] rounded-xl border border-slate-200/90 bg-white/98 p-1.5 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200"
           :style="{ top: `${dropdownPos.top}px`, left: `${dropdownPos.left}px` }"
           @mousedown.prevent
         >
@@ -463,7 +463,7 @@ onBeforeUnmount(() => {
         <div
           v-if="activeDropdown === 'chart'"
           ref="dropdownMenuRef"
-          class="fixed z-[9999] w-[270px] rounded-xl border border-slate-200/90 bg-white/98 p-2 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200 flex flex-col gap-1"
+          class="fixed z-popover w-[270px] rounded-xl border border-slate-200/90 bg-white/98 p-2 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200 flex flex-col gap-1"
           :style="{ top: `${dropdownPos.top}px`, left: `${dropdownPos.left}px` }"
           @mousedown.prevent
         >
@@ -512,7 +512,7 @@ onBeforeUnmount(() => {
         <div
           v-if="activeDropdown === 'emoji'"
           ref="dropdownMenuRef"
-          class="fixed z-[9999] w-[246px] rounded-xl border border-slate-200/90 bg-white/98 p-2.5 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200"
+          class="fixed z-popover w-[246px] rounded-xl border border-slate-200/90 bg-white/98 p-2.5 shadow-2xl backdrop-blur-md dark:border-slate-700/90 dark:bg-slate-800/98 select-none text-slate-700 dark:text-slate-200"
           :style="{ top: `${dropdownPos.top}px`, left: `${dropdownPos.left}px` }"
         >
           <div class="mb-2 flex items-center justify-between px-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">

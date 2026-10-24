@@ -10,6 +10,9 @@ import {
   disposeEChartsDiagrams,
 } from "../../composables/useContentParser.js";
 import { getCoverStickers } from "../../config/coverStickers.js";
+import { galleryFontStack, normalizeGalleryType } from "../../config/galleryTypography.js";
+import { tintGradient } from "../../utils/imageTint.js";
+import CoverDesignArtwork from "../cover/CoverDesignArtwork.vue";
 
 const props = defineProps({
   page: { type: Object, required: true },
@@ -57,6 +60,70 @@ const cardLayoutClass = computed(() => getCardLayoutClass(
   props.selectedPlatform?.height,
 ));
 
+// Raw mode means "the image is the card", so an empty page keeps the themed
+// chrome and its add-image prompt instead of rendering a bare dark rectangle.
+const isRawGallery = computed(
+  () => props.page?.gallery?.mode === "raw" && !props.page?.gallery?.empty,
+);
+
+// Gallery cards and designed covers carry their own palette, so the theme
+// tokens would only fight them: no theme class, no themed header/footer, and no
+// themed wallpaper around them.
+const isGallerySurface = computed(() => Boolean(props.page?.gallery || props.page?.coverDesign));
+
+const overlayItems = computed(() =>
+  Array.isArray(props.page?.gallery?.overlay) ? props.page.gallery.overlay : [],
+);
+
+// The backdrop comes from the card's own picture so a photo never sits on an
+// unrelated wallpaper. Blur is baked into a tiny raster at import time rather
+// than done with CSS, which the export clone handles unreliably.
+const galleryTint = computed(() => {
+  const gallery = props.page?.gallery;
+  if (!gallery || gallery.empty || isRawGallery.value) return null;
+  if (gallery.background !== "blurred" && gallery.background !== "tint") return null;
+  return gallery.tint?.average || gallery.tint?.backdrop ? gallery.tint : null;
+});
+
+const galleryBackdropSrc = computed(() =>
+  props.page?.gallery?.background === "blurred" && !props.transparentBackground
+    ? galleryTint.value?.backdrop || ""
+    : "",
+);
+
+// Title and caption sizes resolve to px from the card design width and reach the
+// stylesheet as custom properties, so preview and the export clone agree.
+const galleryTypeStyle = computed(() => {
+  const type = normalizeGalleryType(props.page?.gallery?.type);
+  const style = {
+    "--gallery-title-size": `${Math.max(10, Math.round(type.titleRatio * geometry.value.width))}px`,
+    "--gallery-title-weight": String(type.titleWeight),
+    "--gallery-caption-size": `${Math.max(9, Math.round(type.captionRatio * geometry.value.width))}px`,
+  };
+  const stack = galleryFontStack(type.fontId, props.customFontFamily);
+  if (stack) style["--gallery-font"] = stack;
+  return style;
+});
+
+// Decoration sizes are resolved to px from the card design width instead of
+// container-query units: the export clone is rendered inside a foreignObject,
+// where `cqw` is unreliable, while px survives both preview and capture.
+function overlaySizePx(item) {
+  return Math.max(6, Math.round(item.size * geometry.value.width));
+}
+
+function overlayPositionStyle(item) {
+  const isSticker = item.kind === "sticker";
+  return {
+    left: `${item.x * 100}%`,
+    top: `${item.y * 100}%`,
+    width: isSticker ? `${overlaySizePx(item)}px` : undefined,
+    height: isSticker ? `${overlaySizePx(item)}px` : undefined,
+    fontSize: isSticker ? undefined : `${overlaySizePx(item)}px`,
+    transform: `translate(-50%, -50%) rotate(${item.rotate}deg)`,
+  };
+}
+
 const posterCanvasStyle = computed(() => {
   const dimensions = {
     width: `${geometry.value.width}px`,
@@ -66,12 +133,49 @@ const posterCanvasStyle = computed(() => {
     ? { "--markcard-custom-font": `"${props.customFontFamily}", sans-serif` }
     : {};
 
+  // Raw gallery pages show the source image alone, so theme chrome and the
+  // document wallpaper must not leak behind or around it.
+  if (isRawGallery.value) {
+    return {
+      ...dimensions,
+      ...typography,
+      background: props.transparentBackground ? "transparent" : "#0b1220",
+      backgroundColor: props.transparentBackground ? "transparent" : "#0b1220",
+      backgroundImage: "none",
+    };
+  }
+
+  // Transparency wins over every sampled backdrop; exporting a transparent PNG
+  // must never bake an opaque tint into the frame.
   if (props.transparentBackground) {
     return {
       ...dimensions,
       ...typography,
       background: "transparent",
       backgroundColor: "transparent",
+      backgroundImage: "none",
+    };
+  }
+
+  // A theme-free surface for gallery cards and designed covers: sampled tint
+  // when one is chosen, otherwise a neutral matte instead of the theme wallpaper.
+  if (isGallerySurface.value) {
+    if (galleryTint.value) {
+      return {
+        ...dimensions,
+        ...typography,
+        background: galleryTint.value.average,
+        backgroundImage:
+          props.page.gallery?.background === "tint" && !galleryBackdropSrc.value
+            ? tintGradient(galleryTint.value)
+            : "none",
+      };
+    }
+    return {
+      ...dimensions,
+      ...typography,
+      background: "#0b1220",
+      backgroundColor: "#0b1220",
       backgroundImage: "none",
     };
   }
@@ -128,9 +232,13 @@ const renderedBody = computed(() => {
   return renderBlocksToHtml(blocks);
 });
 
-const coverStickers = computed(() => (
-  props.page?.cover ? getCoverStickers(props.selectedThemeClass) : []
-));
+const coverStickers = computed(() => {
+  if (!props.page?.cover || props.page?.coverDesign) return [];
+  if (Array.isArray(props.page.stickers) && props.page.stickers.length) {
+    return props.page.stickers;
+  }
+  return getCoverStickers(props.selectedThemeClass);
+});
 const hasOversizeBlock = computed(() => (
   props.page?.blocks?.some((block) => block?.oversize) || false
 ));
@@ -176,6 +284,7 @@ function replaceBrokenContentImages() {
 }
 
 function hasOverflow() {
+  if (props.page?.gallery || props.page?.coverDesign) return false;
   const area = scrollAreaElement.value;
   return Boolean(area && area.scrollHeight > area.clientHeight + 1);
 }
@@ -204,12 +313,19 @@ defineExpose({
 <template>
   <div
     ref="canvasElement"
-    class="poster-canvas-frame flex flex-col justify-between overflow-hidden p-5 select-none"
-    :class="{ 'has-custom-font': customFontFamily }"
+    class="poster-canvas-frame relative flex flex-col justify-between overflow-hidden p-5 select-none"
+    :class="{ 'has-custom-font': customFontFamily, 'poster-canvas-frame--raw': isRawGallery, 'poster-canvas-frame--gallery': isGallerySurface }"
     :style="posterCanvasStyle"
   >
+    <img
+      v-if="galleryBackdropSrc"
+      class="poster-backdrop"
+      :src="galleryBackdropSrc"
+      alt=""
+      aria-hidden="true"
+    />
     <div
-      v-if="showTopLeft || showTopRight"
+      v-if="(showTopLeft || showTopRight) && !isRawGallery && !isGallerySurface"
       class="poster-header z-10 flex min-h-[24px] items-center justify-between px-1 pb-2 text-xs font-semibold text-slate-800 drop-shadow-xs dark:text-slate-100"
     >
       <div class="flex items-center gap-1.5">
@@ -227,7 +343,7 @@ defineExpose({
 
     <article
       class="card-canvas group/card relative flex h-full w-full flex-1 flex-col overflow-hidden rounded-xl border border-black/5 shadow-md dark:border-white/10"
-      :class="[selectedThemeClass, cardLayoutClass, { 'is-cover': page.cover }]"
+      :class="[isGallerySurface ? null : selectedThemeClass, cardLayoutClass, { 'is-cover': page.cover, 'card-canvas--raw': isRawGallery, 'card-canvas--gallery': isGallerySurface }]"
     >
       <div class="leaf-shadow top"></div>
       <div class="leaf-shadow side"></div>
@@ -235,7 +351,7 @@ defineExpose({
       <div v-if="coverStickers.length" class="cover-sticker-layer" aria-hidden="true">
         <img
           v-for="sticker in coverStickers"
-          :key="sticker.position"
+          :key="sticker.id || `${sticker.src}-${sticker.position}`"
           :src="sticker.src"
           alt=""
           class="cover-sticker"
@@ -245,9 +361,97 @@ defineExpose({
         />
       </div>
 
-      <div ref="scrollAreaElement" class="card-scroll-area">
-        <h1 v-if="!page.isOverflow && page.title">{{ page.title }}</h1>
-        <div class="card-body" v-html="renderedBody"></div>
+      <div
+        ref="scrollAreaElement"
+        class="card-scroll-area"
+        :class="{
+          'card-scroll-area--gallery': page.gallery,
+          'card-scroll-area--cover-design': page.coverDesign,
+        }"
+      >
+        <div v-if="page.coverDesign" class="card-cover-layer">
+          <CoverDesignArtwork :design="page.coverDesign" />
+        </div>
+
+        <template v-else-if="page.gallery">
+          <figure
+            v-if="!page.gallery.empty"
+            class="card-gallery"
+            :class="[
+              `card-gallery--${page.gallery.fit || 'cover'}`,
+              {
+                'card-gallery--framed': page.gallery.frame === 'framed' && !isRawGallery,
+                'card-gallery--raw': isRawGallery,
+              },
+            ]"
+            :style="galleryTypeStyle"
+          >
+            <img
+              v-if="page.gallery.src"
+              :src="page.gallery.src"
+              :alt="page.gallery.alt || page.gallery.caption || ''"
+              class="card-gallery__image"
+              loading="eager"
+              draggable="false"
+            />
+            <div v-else class="card-gallery__empty">
+              <span class="card-gallery__empty-mark">+</span>
+              <span class="card-gallery__empty-title">{{ t("gallery.missingImage") }}</span>
+              <span class="card-gallery__empty-desc">{{ t("gallery.missingImageDesc") }}</span>
+            </div>
+
+            <template v-if="!isRawGallery">
+              <div class="card-gallery__shade"></div>
+              <h2
+                v-if="page.cover && page.title"
+                class="card-gallery__title"
+              >
+                {{ page.title }}
+              </h2>
+              <figcaption
+                v-if="page.gallery.showCaptions !== false && page.gallery.caption"
+                class="card-gallery__caption"
+              >
+                {{ page.gallery.caption }}
+              </figcaption>
+              <span v-if="page.gallery.showNumbers === true" class="card-gallery__count">
+                {{ String(page.gallery.index + 1).padStart(2, "0") }} / {{ String(page.gallery.total).padStart(2, "0") }}
+              </span>
+            </template>
+
+            <div v-if="overlayItems.length" class="gallery-overlay" aria-hidden="true">
+              <template v-for="item in overlayItems" :key="item.id">
+                <img
+                  v-if="item.kind === 'sticker'"
+                  :src="item.src"
+                  :alt="item.alt || ''"
+                  class="gallery-sticker"
+                  :style="overlayPositionStyle(item)"
+                  loading="eager"
+                  draggable="false"
+                />
+                <span
+                  v-else
+                  class="gallery-overlay__text"
+                  :style="{ ...overlayPositionStyle(item), color: item.color, fontWeight: item.weight }"
+                >{{ item.text }}</span>
+              </template>
+            </div>
+          </figure>
+
+          <div v-else class="card-gallery card-gallery--empty">
+            <div class="card-gallery__empty">
+              <span class="card-gallery__empty-mark">+</span>
+              <span class="card-gallery__empty-title">{{ page.gallery.title }}</span>
+              <span class="card-gallery__empty-desc">{{ page.gallery.description }}</span>
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
+          <h1 v-if="!page.isOverflow && page.title">{{ page.title }}</h1>
+          <div class="card-body" v-html="renderedBody"></div>
+        </template>
       </div>
 
       <div
@@ -259,7 +463,7 @@ defineExpose({
     </article>
 
     <div
-      v-if="showBottomLeft || showBottomRight"
+      v-if="(showBottomLeft || showBottomRight) && !isRawGallery && !isGallerySurface"
       class="poster-footer z-10 flex min-h-[24px] items-center justify-between px-1 pt-2.5 text-xs text-slate-800 drop-shadow-xs dark:text-slate-100"
     >
       <div v-if="showBottomLeft" class="shrink-0 font-mono text-[11px] opacity-85">

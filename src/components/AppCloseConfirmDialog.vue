@@ -91,7 +91,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-[120] grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"
+      class="fixed inset-0 z-system grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"
       @mousedown.self="cancel"
     >
       <section

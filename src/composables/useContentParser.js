@@ -1123,9 +1123,13 @@ export async function renderEChartsDiagrams(container) {
   if (!rawNodes.length) return;
 
   // Canvas text metrics are fixed when setOption() runs. Wait for web fonts
-  // first so CJK labels use the same glyph widths in preview and export.
+  // first so CJK labels use the same glyph widths in preview and export, but
+  // never let a stalled font fetch block rendering.
   if (typeof document !== "undefined" && document.fonts?.ready) {
-    await document.fonts.ready;
+    await Promise.race([
+      document.fonts.ready,
+      new Promise((resolve) => setTimeout(resolve, 3_000)),
+    ]);
   }
 
   for (const node of rawNodes) {

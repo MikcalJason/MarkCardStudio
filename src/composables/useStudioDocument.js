@@ -4,6 +4,9 @@ import { parseBlocks, blocksToPreviewText } from "./useContentParser.js";
 import { useCustomFonts } from "./useCustomFonts.js";
 import { createMeasuredPaginationSession } from "./useMeasuredPagination.js";
 import { DEFAULT_THEME, THEME_LIST, getThemeByName } from "../config/themes.js";
+import { resolveCoverStickerSelection } from "../config/coverStickers.js";
+import { resolveOverlay } from "../utils/imageOverlay.js";
+import { normalizeGalleryType, GALLERY_BACKGROUNDS } from "../config/galleryTypography.js";
 import { i18n } from "../i18n/index.js";
 
 function t(key, params) {
@@ -305,6 +308,7 @@ export function useStudioDocument() {
     quote: t("runtime.defaultQuote"),
   });
   const customPageMetas = ref({});
+  const coverStickerSelection = ref([]);
 
   function setBackgroundType(type) {
     backgroundType.value = type;
@@ -422,6 +426,11 @@ export function useStudioDocument() {
         if (typeof settings.globalMeta.date === "string") globalMeta.value.date = settings.globalMeta.date;
         if (typeof settings.globalMeta.quote === "string") globalMeta.value.quote = settings.globalMeta.quote;
       }
+      if (Array.isArray(settings.coverStickerSelection)) {
+        coverStickerSelection.value = settings.coverStickerSelection
+          .filter((item) => item && typeof item.id === "string")
+          .slice(0, 4);
+      }
     } catch {
       // Ignore corrupted or unavailable local settings.
     }
@@ -452,6 +461,7 @@ export function useStudioDocument() {
         maxPageLength: maxPageLength.value,
         selectedFontId: selectedFontId.value,
         globalMeta: globalMeta.value,
+        coverStickerSelection: coverStickerSelection.value,
       }));
     } catch {
       // Local storage may be unavailable or full; settings remain in memory.
@@ -485,6 +495,7 @@ export function useStudioDocument() {
       maxPageLength,
       selectedFontId,
       globalMeta,
+      coverStickerSelection,
     ],
     persistUserSettings,
     { deep: true },
@@ -707,6 +718,7 @@ export function useStudioDocument() {
     () => `${selectedPlatform.value.width} x ${selectedPlatform.value.height}`,
   );
   const selectedThemeClass = computed(() => getThemeByName(selectedTheme.value).class);
+  const selectedCoverStickers = computed(() => resolveCoverStickerSelection(coverStickerSelection.value));
 
   const selectedPage = computed(
     () => pages.value[activePageIndex.value] ?? pages.value[0] ?? createFallbackPage(),
@@ -719,6 +731,26 @@ export function useStudioDocument() {
   let debounceTimer = null;
   let paginationAbortController = null;
   let suppressDocumentWatchers = false;
+  let galleryModeRef = null;
+  let galleryWorkRef = null;
+
+  function setGallerySource(creationModeRef, workRef) {
+    galleryModeRef = creationModeRef || null;
+    galleryWorkRef = workRef || null;
+    if (galleryModeRef) {
+      watch(galleryModeRef, () => updatePagesNow());
+    }
+    if (galleryWorkRef) {
+      watch(
+        galleryWorkRef,
+        () => {
+          if (galleryModeRef?.value === "gallery") updatePagesNow();
+        },
+        { deep: true },
+      );
+    }
+    updatePagesNow();
+  }
 
   async function updatePagesNow() {
     paginationAbortController?.abort();
@@ -747,6 +779,22 @@ export function useStudioDocument() {
           }
           return;
         }
+      }
+
+      if (galleryModeRef?.value === "gallery") {
+        pages.value = buildGalleryPages(galleryWorkRef?.value, {
+          kicker: globalMeta.value.kicker,
+          date: globalMeta.value.date || getTodayDateString(),
+          quote: globalMeta.value.quote,
+          stickers: selectedCoverStickers.value,
+          fallbackTitle: t("workspace.untitled"),
+          emptyLabel: t("gallery.emptyCardTitle"),
+          emptyDescription: t("gallery.emptyCardDesc"),
+        });
+        if (activePageIndex.value > pages.value.length - 1) {
+          activePageIndex.value = Math.max(0, pages.value.length - 1);
+        }
+        return;
       }
 
       const parsed = parseMarkdownSections(
@@ -806,6 +854,7 @@ export function useStudioDocument() {
           bodyMarkdown: resolvedMarkdown,
           body: blocksToPreviewText(blockPages[0] || []),
           imageUrl,
+          stickers: section.cover ? selectedCoverStickers.value : [],
           isOverflow: false,
         });
 
@@ -823,6 +872,7 @@ export function useStudioDocument() {
             bodyMarkdown: resolvedMarkdown,
             body: blocksToPreviewText(overflowBlocks),
             imageUrl: "",
+            stickers: [],
             cover: false,
             isOverflow: true,
           });
@@ -891,6 +941,7 @@ export function useStudioDocument() {
     showBottomLeft,
     showBottomRight,
     selectedFontId,
+    coverStickerSelection,
   ], () => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
@@ -1127,6 +1178,32 @@ ${t("document.inputHere")}`;
     customHeight.value = temp;
   }
 
+  function setCoverStickerSelection(selection) {
+    const validPositions = new Set(["top-left", "top-right", "bottom-left", "bottom-right"]);
+    coverStickerSelection.value = (Array.isArray(selection) ? selection : [])
+      .filter((item) => item && typeof item.id === "string")
+      .slice(0, 4)
+      .map((item) => ({
+        id: item.id,
+        position: validPositions.has(item.position) ? item.position : "top-right",
+      }));
+  }
+
+  function setDocumentTitle(title) {
+    const nextTitle = String(title || "").replace(/\s+/g, " ").trim();
+    if (!nextTitle) return;
+    const lines = markdownSource.value.split("\n");
+    const h1Index = lines.findIndex((line) => /^#\s+/.test(line));
+    if (h1Index >= 0) {
+      const nextLine = `# ${nextTitle}`;
+      if (lines[h1Index] === nextLine) return;
+      lines[h1Index] = nextLine;
+    } else {
+      lines.unshift(`# ${nextTitle}`, "");
+    }
+    recordDiscreteChange(lines.join("\n"));
+  }
+
   function updateGlobalMeta(meta) {
     if (meta.kicker !== undefined) globalMeta.value.kicker = meta.kicker;
     if (meta.date !== undefined) globalMeta.value.date = meta.date;
@@ -1197,6 +1274,7 @@ ${t("document.inputHere")}`;
     openDocumentFromDialog,
     saveDocument,
     createNewDocument,
+    setDocumentTitle,
     addPageTemplate,
     deletePage,
     movePage,
@@ -1224,6 +1302,10 @@ ${t("document.inputHere")}`;
     deleteCustomFont,
     openExportFolderPicker,
     updateGlobalMeta,
+    coverStickerSelection,
+    selectedCoverStickers,
+    setCoverStickerSelection,
+    setGallerySource,
   };
 }
 
@@ -1239,6 +1321,112 @@ function createFallbackPage() {
     cover: true,
   };
 }
+
+function buildGalleryPages(work, options = {}) {
+  const images = Array.isArray(work?.images)
+    ? work.images.filter((image) => image && typeof image.assetId === "string")
+    : [];
+  const layout = {
+    mode: work?.gallery?.mode === "raw" ? "raw" : "template",
+    fit: work?.gallery?.fit === "contain" ? "contain" : "cover",
+    showCaptions: work?.gallery?.showCaptions !== false,
+    showNumbers: work?.gallery?.showNumbers === true,
+    frame: work?.gallery?.frame === "framed" ? "framed" : "bleed",
+    background: GALLERY_BACKGROUNDS.includes(work?.gallery?.background)
+      ? work.gallery.background
+      : "theme",
+    type: normalizeGalleryType(work?.gallery?.type),
+  };
+  const title = work?.title || options.fallbackTitle || t("workspace.untitled");
+  const coverDesign = work?.coverDesign && typeof work.coverDesign === "object"
+    ? work.coverDesign
+    : null;
+
+  const coverPage = coverDesign
+    ? {
+        label: t("runtime.cover"),
+        kicker: coverDesign.kicker || options.kicker || "@MarkCard",
+        title: coverDesign.title || title,
+        bodyMarkdown: "",
+        body: [],
+        blocks: [],
+        imageClass: pageImageClasses[0],
+        imageUrl: "",
+        cover: true,
+        isOverflow: false,
+        stickers: [],
+        date: coverDesign.meta || options.date || getTodayDateString(),
+        quote: options.quote || t("runtime.defaultQuote"),
+        coverDesign,
+      }
+    : null;
+
+  if (!images.length) {
+    if (coverPage) return [coverPage];
+    return [
+      {
+        label: t("runtime.cover"),
+        kicker: options.kicker || "@MarkCard",
+        title,
+        bodyMarkdown: "",
+        body: [],
+        blocks: [],
+        imageClass: pageImageClasses[0],
+        imageUrl: "",
+        cover: true,
+        isOverflow: false,
+        stickers: options.stickers || [],
+        date: options.date || getTodayDateString(),
+        quote: options.quote || t("runtime.defaultQuote"),
+        gallery: {
+          empty: true,
+          title: options.emptyLabel || t("gallery.emptyCardTitle"),
+          description: options.emptyDescription || t("gallery.emptyCardDesc"),
+          src: "",
+          caption: "",
+          index: 0,
+          total: 0,
+          ...layout,
+        },
+      },
+    ];
+  }
+
+  const contentPages = images.map((image, index) => {
+    const pageNumber = index + (coverDesign ? 2 : 1);
+    const isLegacyCover = !coverDesign && index === 0;
+    return {
+      label: isLegacyCover ? t("runtime.cover") : String(pageNumber).padStart(2, "0"),
+      kicker: options.kicker || "@MarkCard",
+      title: isLegacyCover ? title : "",
+      bodyMarkdown: "",
+      body: [],
+      blocks: [],
+      imageClass: pageImageClasses[index % pageImageClasses.length],
+      imageUrl: image.src || "",
+      cover: isLegacyCover,
+      isOverflow: false,
+      stickers: isLegacyCover ? options.stickers || [] : [],
+      date: options.date || getTodayDateString(),
+      quote: options.quote || t("runtime.defaultQuote"),
+      gallery: {
+        empty: false,
+        src: image.src || "",
+        alt: image.alt || image.caption || "",
+        caption: image.caption || "",
+        index,
+        total: images.length,
+        missing: !image.src,
+        overlay: resolveOverlay(image.overlay),
+        tint: image.tint || null,
+        ...layout,
+      },
+    };
+  });
+
+  return coverPage ? [coverPage, ...contentPages] : contentPages;
+}
+
 
 function getTodayDateString() {
   const now = new Date();

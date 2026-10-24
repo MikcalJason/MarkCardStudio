@@ -78,8 +78,8 @@ onBeforeUnmount(() => {
   <header
     class="flex items-center gap-3 border-b border-slate-200/70 dark:border-slate-800 px-4 py-2.5 lg:px-5 select-none">
     <!-- Title & Page Count Badge -->
-    <div class="mr-auto inline-flex items-center gap-2.5">
-      <strong class="text-base font-semibold text-slate-900 dark:text-slate-100">{{ t("preview.title") }}</strong>
+    <div class="mr-auto inline-flex shrink-0 items-center gap-2.5">
+      <strong class="whitespace-nowrap text-base font-semibold text-slate-900 dark:text-slate-100">{{ t("preview.title") }}</strong>
       <span
         class="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
         {{ t("common.pages", { count: pagesLength }) }}
@@ -87,7 +87,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- View Mode Switch: Icon-Only with Clean Edge Border Indicator -->
-    <div class="inline-flex items-center gap-1.5 select-none" role="tablist" :aria-label="t('preview.title')">
+    <div class="inline-flex shrink-0 items-center gap-1.5 select-none" role="tablist" :aria-label="t('preview.title')">
       <button
         type="button"
         role="tab"
@@ -122,7 +122,7 @@ onBeforeUnmount(() => {
     <div class="h-4.5 w-px bg-slate-200/80 dark:bg-slate-800 mx-1"></div>
 
     <!-- Page Navigation & Page Dropdown Selector -->
-    <div class="inline-flex items-center gap-1.5">
+    <div class="inline-flex shrink-0 items-center gap-1.5">
       <AppIconButton :disabled="!canGoPrevious" :aria-label="t('preview.previous')" :title="t('preview.previous')"
         @click="$emit('previous-page')">
         <AppIcon name="chevron-left" :size="16" />
@@ -160,7 +160,7 @@ onBeforeUnmount(() => {
 
     <!-- Zoom Controls Dropdown & Buttons -->
     <div
-      class="relative flex items-center rounded-lg border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 p-0.5 shadow-2xs"
+      class="relative hidden shrink-0 items-center rounded-lg border border-slate-200/90 bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 p-0.5 shadow-2xs 2xl:flex"
       ref="zoomDropdownRef">
       <button
         class="grid h-7 w-7 place-items-center rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer"
@@ -193,9 +193,11 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- Fullscreen Button -->
-    <AppIconButton type="button" :aria-label="t('preview.fullscreen')" :title="t('preview.fullscreen')"
-      @click="$emit('toggle-fullscreen')">
-      <AppIcon name="maximize" :size="15" />
-    </AppIconButton>
+    <div class="hidden 2xl:block">
+      <AppIconButton type="button" :aria-label="t('preview.fullscreen')" :title="t('preview.fullscreen')"
+        @click="$emit('toggle-fullscreen')">
+        <AppIcon name="maximize" :size="15" />
+      </AppIconButton>
+    </div>
   </header>
 </template>

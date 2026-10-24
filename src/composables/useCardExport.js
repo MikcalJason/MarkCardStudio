@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getFontEmbedCSS, toCanvas } from "html-to-image";
 import { jsPDF } from "jspdf";
-import { createApp, nextTick } from "vue";
+import { createApp, nextTick, ref } from "vue";
 import CardArtwork from "../components/preview/CardArtwork.vue";
 import { renderMermaidDiagrams, renderEChartsDiagrams } from "./useContentParser.js";
 import * as echarts from "echarts";
@@ -37,7 +37,12 @@ export function useCardExport({
   showBottomRight,
   customFontFamily,
   customFontEmbedCss,
+  assetLibrary,
 }) {
+  // Which export is running, so only the button that was clicked shows a
+  // spinner instead of every export button lighting up together.
+  const exportAction = ref("");
+
   async function exportDocument() {
     await nextTick();
     const allPages = pages?.value || [];
@@ -45,6 +50,16 @@ export function useCardExport({
     if (isExporting?.value) return;
 
     if (isExporting) isExporting.value = true;
+    exportAction.value = "document";
+    // Backstop: if some await inside the pipeline never settles, the spinner
+    // must still stop and the user must learn why nothing was written.
+    const watchdog = setTimeout(() => {
+      if (isExporting?.value) {
+        isExporting.value = false;
+        exportAction.value = "";
+        exportMessage.value = t("runtime.exportTimeout");
+      }
+    }, 180_000);
 
     try {
       const platform = selectedPlatform?.value || { width: 1080, height: 1440, name: "小红书" };
@@ -104,6 +119,8 @@ export function useCardExport({
         exportMessage.value = t("runtime.exportFailed", { error: err.message || err });
       }
     } finally {
+      clearTimeout(watchdog);
+      exportAction.value = "";
       if (isExporting) isExporting.value = false;
     }
   }
@@ -330,13 +347,144 @@ export function useCardExport({
     }
   }
 
+  async function exportToAssetLibrary() {
+    await nextTick();
+    const allPages = pages?.value || [];
+    if (!allPages.length || typeof assetLibrary?.importFromDataUrl !== "function") return;
+    if (isExporting?.value) return;
+    isExporting.value = true;
+    exportAction.value = "library";
+    const watchdog = setTimeout(() => {
+      if (isExporting?.value) {
+        isExporting.value = false;
+        exportAction.value = "";
+        exportMessage.value = t("runtime.exportTimeout");
+      }
+    }, 180_000);
+
+    try {
+      const platform = selectedPlatform?.value || { width: 1080, height: 1440 };
+      const ext = selectedFormat?.value === "JPG" ? "jpg" : "png";
+      const currentScale = scale?.value || 2;
+      const jpegQuality = currentScale === 1 ? 0.8 : currentScale === 3 ? 0.95 : 0.9;
+      const documentStem = createOutputFolderName(sourcePath?.value);
+      let added = 0;
+      let duplicates = 0;
+
+      for (let i = 0; i < allPages.length; i += 1) {
+        exportMessage.value = t("runtime.renderingPage", { current: i + 1, total: allPages.length });
+        const { blob } = await renderPageToImage(allPages[i], {
+          width: platform.width,
+          height: platform.height,
+          themeClass: selectedThemeClass?.value || "theme-swiss-grid",
+          transparent: transparentBackground?.value || false,
+          backgroundColor: backgroundColor?.value || "#69eacb",
+          backgroundType: backgroundType?.value || "gradient",
+          backgroundValue: backgroundValue?.value || "",
+          format: ext === "jpg" ? "JPG" : "PNG",
+          quality: jpegQuality,
+          pageNumber: i + 1,
+          totalPages: allPages.length,
+          showTopLeft: showTopLeft?.value ?? true,
+          showTopRight: showTopRight?.value ?? showPageNumber?.value ?? true,
+          showBottomLeft: showBottomLeft?.value ?? true,
+          showBottomRight: showBottomRight?.value ?? true,
+          customFontFamily: customFontFamily?.value || "",
+          customFontEmbedCss: customFontEmbedCss?.value || "",
+        });
+
+        const result = await assetLibrary.importFromDataUrl({
+          dataUrl: await blobToDataUrl(blob),
+          fileName: `${documentStem}-page-${String(i + 1).padStart(2, "0")}.${ext}`,
+          mediaType: blob.type,
+          sourceKind: "export",
+        });
+        if (result.duplicate) duplicates += 1;
+        else added += 1;
+      }
+
+      exportMessage.value = t("runtime.libraryExported", { added, duplicates });
+    } catch (err) {
+      console.error("Library export error:", err);
+      exportMessage.value = t("runtime.libraryExportFailed", { error: err?.message || err });
+    } finally {
+      clearTimeout(watchdog);
+      exportAction.value = "";
+      isExporting.value = false;
+    }
+  }
+
   return {
     exportCurrentPage: exportDocument,
+    exportToAssetLibrary,
+    exportAction,
     openOutputFolder,
   };
 }
 
-function createOutputFolderName(markdownPath) {
+/**
+ * Shared page renderer for consumers that need image bytes instead of files
+ * (publish bundles). It must stay the only path from a page to an image so
+ * preview, pagination and export keep matching.
+ */
+export async function renderPageToImage(page, options = {}) {
+  const {
+    width = 1080,
+    height = 1440,
+    themeClass = "theme-swiss-grid",
+    transparent = false,
+    backgroundColor = "#69eacb",
+    backgroundType = "gradient",
+    backgroundValue = "",
+    format = "PNG",
+    quality = 0.9,
+    pageNumber = 1,
+    totalPages = 1,
+    showTopLeft = true,
+    showTopRight = true,
+    showBottomLeft = true,
+    showBottomRight = true,
+    customFontFamily = "",
+    customFontEmbedCss = "",
+  } = options;
+
+  const ext = String(format).toUpperCase() === "JPG" ? "jpg" : "png";
+  const canvas = await renderPageToCanvas(
+    page,
+    width,
+    height,
+    themeClass,
+    transparent && ext !== "jpg",
+    backgroundColor,
+    backgroundType,
+    backgroundValue,
+    ext,
+    showTopLeft,
+    showTopRight,
+    showBottomLeft,
+    showBottomRight,
+    pageNumber,
+    totalPages,
+    customFontFamily,
+    customFontEmbedCss,
+  );
+  if (!canvas) {
+    throw new Error(t("runtime.renderFailed", { page: pageNumber }));
+  }
+
+  const blob = await canvasToBlob(
+    canvas,
+    ext === "jpg" ? "image/jpeg" : "image/png",
+    ext === "jpg" ? quality : 1.0,
+  );
+  if (!blob) {
+    throw new Error(t("runtime.convertFailed", { format: ext.toUpperCase() }));
+  }
+
+  return { blob, width: canvas.width, height: canvas.height };
+}
+
+export function createOutputFolderName(markdownPath) {
   if (typeof markdownPath === "string" && markdownPath.trim()) {
     const normalizedPath = markdownPath.trim().replace(/\\/g, "/");
     const fileName = normalizedPath.split("/").pop() || "";
@@ -365,6 +513,38 @@ function sanitizeFolderName(name) {
 }
 
 // Offscreen DOM card renderer for high-res snapshot capture using html-to-image
+// html-to-image resolves its image loads on requestAnimationFrame, and WebKit can
+// leave Image.decode() pending for SVG data URLs. WebViews also pause rAF while
+// occluded, so capture gets timer-backed shims for both; everything is restored
+// afterwards.
+async function toCanvasUnthrottled(node, options) {
+  const originalFrame = window.requestAnimationFrame;
+  const originalCancel = window.cancelAnimationFrame;
+  const originalDecode = HTMLImageElement.prototype.decode;
+  window.requestAnimationFrame = (callback) => window.setTimeout(() => callback(performance.now()), 0);
+  window.cancelAnimationFrame = (id) => window.clearTimeout(id);
+  HTMLImageElement.prototype.decode = function patchedDecode() {
+    const source = this.currentSrc || this.src || "";
+    if (/^data:image\/svg/i.test(source) || /\.svg(?:[?#]|$)/i.test(source)) {
+      return Promise.resolve();
+    }
+    return withTimeout(
+      Promise.resolve()
+        .then(() => originalDecode.call(this))
+        .catch(() => undefined),
+      4_000,
+      undefined,
+    );
+  };
+  try {
+    return await toCanvas(node, options);
+  } finally {
+    window.requestAnimationFrame = originalFrame;
+    window.cancelAnimationFrame = originalCancel;
+    HTMLImageElement.prototype.decode = originalDecode;
+  }
+}
+
 async function renderPageToCanvas(page, width, height, themeClass, isTransparent, bgHex, bgType, bgVal, ext, isTopLeft = true, isTopRight = true, isBottomLeft = true, isBottomRight = true, pageNum = 1, totalPages = 1, customFontFamily = "", customFontEmbedCss = "") {
   // Render at a standard design viewport (450px wide portrait / 640px landscape)
   // then upscale via pixelRatio so the final canvas exactly matches the target platform size.
@@ -419,7 +599,7 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
     await renderMermaidDiagrams(posterNode);
     await renderEChartsDiagrams(posterNode);
     if (document.fonts?.ready) {
-      await document.fonts.ready;
+      await withTimeout(document.fonts.ready, 3_000, null);
     }
     const discoveredFontCss = await rasterizeMathForExport(posterNode);
     const fontEmbedCSS = [discoveredFontCss, customFontEmbedCss]
@@ -431,10 +611,6 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
       customFontEmbedCss,
     );
     await rasterizeEChartsForExport(posterNode);
-    // Inline images before cloning the node. html-to-image needs to fetch image
-    // sources again while cloning; that second fetch is unreliable in the
-    // Tauri WebView (especially for remote URLs) and can result in a blank
-    // image in the exported PNG even though the preview displays it.
     await inlineImagesForExport(posterNode, renderPixelRatio);
     await inlineBackgroundImagesForExport(posterNode);
     await rasterizeCoverStickersForExport(posterNode);
@@ -442,13 +618,21 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
     // Ensure all images (content images, stickers, math formula PNGs, mermaid diagrams)
     // are 100% loaded and decoded in bitmap memory before canvas capture
     const allImages = Array.from(posterNode.querySelectorAll("img"));
-    const decodedImages = await Promise.all(allImages.map((img) => waitForImageDecode(img)));
+    const decodedImages = await Promise.all(
+      allImages.map((img) =>
+        // Stickers were just rasterized to data URLs; decoding them again only
+        // adds WebKit stalls, and the capture loads them by itself.
+        img.matches("img.cover-sticker, img.gallery-sticker")
+          ? true
+          : waitForImageDecode(img),
+      ),
+    );
     if (decodedImages.some((decoded) => !decoded)) {
       throw new Error(t("runtime.binaryFailed"));
     }
 
     const scrollArea = posterNode.querySelector(".card-scroll-area");
-    if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight + 1) {
+    if (!page?.gallery && !page?.coverDesign && scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight + 1) {
       throw new Error(t("runtime.renderFailed", { page: pageNum }));
     }
 
@@ -479,9 +663,20 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
       image.style.opacity = "0";
     });
 
-    let canvas;
+    let canvas = null;
     try {
-      canvas = await toCanvas(posterNode, captureOptions);
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        canvas = await toCanvasUnthrottled(posterNode, captureOptions);
+        if (!page?.gallery?.src) break;
+        // WebKit has been seen to drop the photo from a clone; retry once before
+        // accepting an export that would reach the publisher as a blank card.
+        if (!galleryPhotoMissingFrom(canvas, posterNode, captureOptions.backgroundColor)) break;
+        if (attempt === 2) {
+          console.warn("Gallery photo is missing from the export capture");
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        }
+      }
     } finally {
       echartsImages.forEach((image, index) => {
         image.style.opacity = echartsImageOpacities[index];
@@ -536,7 +731,7 @@ async function rasterizeMathForExport(root) {
       };
       if (fontEmbedCSS) options.fontEmbedCSS = fontEmbedCSS;
 
-      const formulaCanvas = await toCanvas(formulaNode, options);
+      const formulaCanvas = await toCanvasUnthrottled(formulaNode, options);
       const image = document.createElement("img");
       image.src = formulaCanvas.toDataURL("image/png");
       image.alt = t("content.math");
@@ -732,6 +927,19 @@ async function inlineImagesForExport(root, renderPixelRatio) {
 
         // Large local files can make html-to-image's cloned SVG exceed WebView
         // limits even though the live preview can decode the original source.
+        // Gallery cards are full-bleed photos, so they get the same treatment.
+        const isGalleryPhoto = img.classList.contains("card-gallery__image");
+        if (isGalleryPhoto) {
+          const normalized = rasterizeContentImage(img, renderPixelRatio, { preferJpeg: true });
+          if (normalized) {
+            img.src = normalized;
+            await waitForImageDecode(img);
+          }
+          if (img.complete && img.naturalWidth > 0) {
+            return replaceGalleryImageWithBackground(img);
+          }
+          return false;
+        }
         if (img.classList.contains("card-image") || img.classList.contains("card-inline-image")) {
           const normalized = rasterizeContentImage(img, renderPixelRatio);
           if (normalized) {
@@ -785,7 +993,7 @@ function replaceFailedContentImage(image) {
   return true;
 }
 
-function rasterizeContentImage(img, renderPixelRatio) {
+function rasterizeContentImage(img, renderPixelRatio, { preferJpeg = false } = {}) {
   try {
     const naturalWidth = img.naturalWidth || 0;
     const naturalHeight = img.naturalHeight || 0;
@@ -808,12 +1016,90 @@ function rasterizeContentImage(img, renderPixelRatio) {
     context.drawImage(img, 0, 0, width, height);
 
     const sourceType = img.src.match(/^data:([^;,]+)/i)?.[1]?.toLowerCase() || "";
-    const outputType = sourceType === "image/jpeg" ? "image/jpeg" : "image/png";
+    // Photos are re-encoded as JPEG: a multi-megabyte PNG inside html-to-image's
+    // cloned SVG is what WebKit silently drops, blanking the card.
+    const opaque = preferJpeg && isOpaqueImage(img);
+    const outputType =
+      sourceType === "image/jpeg" || (preferJpeg && opaque) ? "image/jpeg" : "image/png";
     return canvas.toDataURL(outputType, outputType === "image/jpeg" ? 0.92 : undefined);
   } catch (error) {
     console.warn("Failed to normalize local image for export", error);
     return null;
   }
+}
+
+function isOpaqueImage(img) {
+  try {
+    const probe = document.createElement("canvas");
+    probe.width = 16;
+    probe.height = 16;
+    const context = probe.getContext("2d", { willReadFrequently: true });
+    if (!context) return false;
+    context.drawImage(img, 0, 0, probe.width, probe.height);
+    const pixels = context.getImageData(0, 0, probe.width, probe.height).data;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] < 250) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseHexColor(value) {
+  const match = String(value || "").trim().match(/^#([0-9a-f]{6})$/i);
+  if (!match) return null;
+  const hex = match[1];
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+/// True when the card area is (almost) entirely the capture background or the
+/// neutral matte, which means the photo never made it into the capture.
+function galleryPhotoMissingFrom(canvas, root, backgroundColor) {
+  const figure = root.querySelector(".card-gallery");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!figure || !context) return false;
+  const rootRect = root.getBoundingClientRect();
+  const rect = figure.getBoundingClientRect();
+  if (rect.width < 8 || rect.height < 8 || rootRect.width <= 0 || rootRect.height <= 0) {
+    return false;
+  }
+  const scaleX = canvas.width / rootRect.width;
+  const scaleY = canvas.height / rootRect.height;
+  const left = (rect.left - rootRect.left) * scaleX;
+  const top = (rect.top - rootRect.top) * scaleY;
+  const width = Math.max(1, rect.width * scaleX);
+  const height = Math.max(1, rect.height * scaleY);
+  const allowed = [parseHexColor(backgroundColor) || [105, 234, 202], [11, 18, 32]].filter(Boolean);
+
+  const samples = 7;
+  let blank = 0;
+  let total = 0;
+  for (let row = 0; row < samples; row += 1) {
+    for (let column = 0; column < samples; column += 1) {
+      const x = Math.min(canvas.width - 1, Math.round(left + ((column + 0.5) * width) / samples));
+      const y = Math.min(canvas.height - 1, Math.round(top + ((row + 0.5) * height) / samples));
+      if (x < 0 || y < 0) continue;
+      const pixel = context.getImageData(x, y, 1, 1).data;
+      total += 1;
+      if (
+        allowed.some(
+          ([red, green, blue]) =>
+            Math.abs(pixel[0] - red) <= 8 &&
+            Math.abs(pixel[1] - green) <= 8 &&
+            Math.abs(pixel[2] - blue) <= 8,
+        )
+      ) {
+        blank += 1;
+      }
+    }
+  }
+  // Text and stickers occupy a small part of the card, so allow a few hits.
+  return total > 0 && blank / total >= 0.85;
 }
 
 function compositeContentImages(canvas, root) {
@@ -844,6 +1130,20 @@ function compositeContentImages(canvas, root) {
   }
 }
 
+/// WebKit's foreignObject rendering drops gallery photos: they are absolutely
+/// positioned, full-bleed, object-fit images. Swapping the element for the same
+/// box painted as a CSS background keeps the title, shade, and stickers above it.
+function replaceGalleryImageWithBackground(img) {
+  const wrapper = document.createElement("div");
+  wrapper.className = img.className;
+  wrapper.style.backgroundImage = `url("${img.src}")`;
+  wrapper.style.backgroundSize = img.closest(".card-gallery--contain") ? "contain" : "cover";
+  wrapper.style.backgroundPosition = "center";
+  wrapper.style.backgroundRepeat = "no-repeat";
+  img.replaceWith(wrapper);
+  return true;
+}
+
 function compositeCoverStickers(canvas, root) {
   const context = canvas.getContext("2d");
   const rootRect = root.getBoundingClientRect();
@@ -851,7 +1151,7 @@ function compositeCoverStickers(canvas, root) {
 
   const scaleX = canvas.width / rootRect.width;
   const scaleY = canvas.height / rootRect.height;
-  for (const sticker of root.querySelectorAll("img.cover-sticker")) {
+  for (const sticker of root.querySelectorAll("img.cover-sticker, img.gallery-sticker")) {
     if (!sticker.complete || sticker.naturalWidth <= 0) continue;
 
     const rect = sticker.getBoundingClientRect();
@@ -995,9 +1295,16 @@ function extractCssUrl(backgroundImage) {
 
 async function loadImageSourceAsDataUrl(source) {
   const absoluteUrl = new URL(source, window.location.href).href;
+  const controller = new AbortController();
+  // A stalled request would otherwise keep the export spinner alive forever.
+  const timer = setTimeout(() => controller.abort(), 15_000);
 
   try {
-    const response = await fetch(absoluteUrl, { cache: "force-cache", mode: "cors" });
+    const response = await fetch(absoluteUrl, {
+      cache: "force-cache",
+      mode: "cors",
+      signal: controller.signal,
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     if (blob.type && !blob.type.startsWith("image/")) {
@@ -1010,12 +1317,14 @@ async function loadImageSourceAsDataUrl(source) {
     const resolved = await invoke("resolve_remote_image", { url: absoluteUrl });
     if (!resolved?.dataUrl) throw browserError;
     return resolved.dataUrl;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 /** Replace cover SVG sources with PNG data before the final DOM capture. */
 async function rasterizeCoverStickersForExport(root) {
-  const stickers = Array.from(root.querySelectorAll("img.cover-sticker"));
+  const stickers = Array.from(root.querySelectorAll("img.cover-sticker, img.gallery-sticker"));
 
   for (const sticker of stickers) {
     try {
@@ -1029,9 +1338,10 @@ async function rasterizeCoverStickersForExport(root) {
         context.drawImage(sticker, 0, 0, 384, 384);
         const dataUrl = canvas.toDataURL("image/png");
         if (dataUrl) {
+          // The raster is generated synchronously, so there is nothing to wait
+          // for here; html-to-image loads the data URL itself during capture.
           sticker.srcset = "";
           sticker.src = dataUrl;
-          await waitForImageDecode(sticker);
         }
       }
     } catch (error) {
@@ -1041,17 +1351,42 @@ async function rasterizeCoverStickersForExport(root) {
   }
 }
 
+// WebKit's decode() can stay pending for a corrupt or oversized image, so every
+// decode in the export path is raced against a timeout; a miss simply falls back
+// to the already-available intrinsic size.
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+function isVectorImage(img) {
+  const source = img?.currentSrc || img?.src || "";
+  return /^data:image\/svg/i.test(source) || /\.svg(?:[?#]|$)/i.test(source);
+}
+
+function decodeImage(img) {
+  // WebKit can leave decode() pending forever on SVG sources (OpenMoji stickers
+  // are SVG), so vectors rely on the intrinsic size instead of a decode round.
+  if (typeof img.decode !== "function" || isVectorImage(img)) {
+    return Promise.resolve(img.complete && img.naturalWidth > 0);
+  }
+  return withTimeout(
+    img.decode()
+      .then(() => true)
+      .catch(() => img.complete && img.naturalWidth > 0),
+    4_000,
+    img.complete && img.naturalWidth > 0,
+  );
+}
+
 function waitForImageDecode(img) {
   if (!img) return Promise.resolve(false);
 
   if (img.complete) {
     if (img.naturalWidth <= 0) return Promise.resolve(false);
-    if (typeof img.decode === "function") {
-      return img.decode()
-        .then(() => true)
-        .catch(() => img.complete && img.naturalWidth > 0);
-    }
-    return Promise.resolve(true);
+    return decodeImage(img);
   }
 
   return new Promise((resolve) => {
@@ -1071,18 +1406,10 @@ function waitForImageDecode(img) {
       img.addEventListener("error", finish);
       setTimeout(finish, 3000);
     }
-  }).then((loaded) => {
-    if (!loaded) return false;
-    if (typeof img.decode === "function") {
-      return img.decode()
-        .then(() => true)
-        .catch(() => img.complete && img.naturalWidth > 0);
-    }
-    return img.complete && img.naturalWidth > 0;
-  });
+  }).then((loaded) => (loaded ? decodeImage(img) : false));
 }
 
-function blobToDataUrl(blob) {
+export function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -1127,7 +1454,7 @@ function formatRichText(text) {
   return html;
 }
 
-function blobToBase64(blob) {
+export function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {

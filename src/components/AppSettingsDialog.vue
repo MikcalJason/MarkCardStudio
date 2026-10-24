@@ -7,6 +7,7 @@ import { APP_INFO } from "../config/appInfo.js";
 import { useAppPreferences } from "../i18n/index.js";
 import { useUpdater } from "../composables/useUpdater.js";
 import AppIcon from "./AppIcon.vue";
+import WechatSetupCard from "./publish/WechatSetupCard.vue";
 
 const props = defineProps({
   open: {
@@ -26,6 +27,7 @@ const {
   setAutoUpdatePreference,
 } = useAppPreferences();
 const { isChecking, isUpToDate, errorMsg, checkForUpdates } = useUpdater();
+const runtimeIsTauri = isTauri();
 
 const activeSection = ref("general");
 const closeButtonRef = ref(null);
@@ -37,6 +39,7 @@ let previouslyFocusedElement = null;
 
 const sections = computed(() => [
   { id: "general", label: t("settingsDialog.general"), icon: "settings" },
+  { id: "channels", label: t("settingsDialog.channels"), icon: "link" },
   { id: "about", label: t("settingsDialog.about"), icon: "info" },
   { id: "support", label: t("settingsDialog.support"), icon: "heart-handshake" },
 ]);
@@ -181,12 +184,12 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div
       v-if="open"
-      class="fixed inset-0 z-[100] grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm animate-in fade-in duration-200"
+      class="fixed inset-0 z-dialog-raised grid place-items-center bg-slate-950/40 p-4 backdrop-blur-sm animate-in fade-in duration-200"
       @mousedown.self="close"
     >
       <section
         ref="dialogRef"
-        class="grid h-[min(540px,calc(100vh-2rem))] w-[min(720px,calc(100vw-2rem))] grid-cols-[190px_minmax(0,1fr)] overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900"
+        class="grid h-[min(600px,calc(100vh-2rem))] w-[min(720px,calc(100vw-2rem))] grid-cols-[190px_minmax(0,1fr)] overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900"
         role="dialog"
         aria-modal="true"
         tabindex="-1"
@@ -224,7 +227,7 @@ onBeforeUnmount(() => {
               <AppIcon
                 :name="section.icon"
                 :size="15"
-                :class="activeSection === section.id ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'"
+                :class="activeSection === section.id ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500 dark:text-slate-400'"
               />
               <span>{{ section.label }}</span>
             </button>
@@ -236,7 +239,7 @@ onBeforeUnmount(() => {
         </aside>
 
         <!-- Main Content Area -->
-        <div class="flex min-w-0 flex-col bg-white dark:bg-slate-900">
+        <div class="flex min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-slate-900">
           <header class="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 px-6 dark:border-slate-800">
             <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100">
               {{ activeSectionTitle }}
@@ -433,6 +436,16 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Support Section -->
+            <div v-else-if="activeSection === 'channels'" class="space-y-4">
+              <section>
+                <h3 class="text-sm font-bold text-slate-800 dark:text-slate-100">{{ t("settingsDialog.channelsTitle") }}</h3>
+                <p class="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                  {{ t("settingsDialog.channelsDescription") }}
+                </p>
+              </section>
+              <WechatSetupCard :is-tauri="runtimeIsTauri" />
+            </div>
+
             <div v-else class="space-y-5">
               <header>
                 <h3 class="text-sm font-bold text-slate-800 dark:text-slate-100">{{ t("settingsDialog.supportTitle") }}</h3>

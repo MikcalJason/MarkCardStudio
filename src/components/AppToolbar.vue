@@ -1,9 +1,10 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import AppIcon from "./AppIcon.vue";
 import AppIconButton from "./AppIconButton.vue";
 import AppToolbarButton from "./AppToolbarButton.vue";
+import { isCreationModeVisible } from "../config/uiFlags.js";
 
 const props = defineProps({
   selectedTheme: {
@@ -26,6 +27,18 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  exportAction: {
+    type: String,
+    default: "",
+  },
+  activeWorkspace: {
+    type: String,
+    default: "create",
+  },
+  creationMode: {
+    type: String,
+    default: "write",
+  },
 });
 
 const emit = defineEmits([
@@ -38,12 +51,24 @@ const emit = defineEmits([
   "toggle-dark-mode",
   "undo",
   "redo",
+  "select-creation-mode",
+  "open-asset-library",
+  "open-sticker-picker",
 ]);
 
 import { THEME_LIST } from "../config/themes.js";
 
 const themes = THEME_LIST;
+const isDocumentExporting = computed(
+  () => props.isExporting && props.exportAction === "document",
+);
 const { t } = useI18n();
+
+const creationModes = [
+  { id: "write", labelKey: "workspace.write", icon: "file-text" },
+  { id: "gallery", labelKey: "workspace.gallery", icon: "layout-grid" },
+  { id: "poster", labelKey: "workspace.poster", icon: "image" },
+].filter((mode) => isCreationModeVisible(mode.id));
 const isThemeOpen = ref(false);
 const themeDropdownRef = ref(null);
 
@@ -79,21 +104,21 @@ onBeforeUnmount(() => {
   <nav
     class="relative z-30 shrink-0 border-b border-t border-slate-200/70 bg-white/88 px-4 py-2 backdrop-blur-[18px] dark:border-slate-800/80 dark:bg-slate-900/90"
     :aria-label="t('toolbar.label')">
-    <div class="flex items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
       <!-- Left Toolbar Section: Document Actions + Undo/Redo -->
-      <div class="inline-flex items-center gap-2 sm:gap-3">
-        <AppToolbarButton compact @click="$emit('new-document')">
+      <div v-if="activeWorkspace === 'create'" class="inline-flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+        <AppToolbarButton compact :title="t('toolbar.new')" :aria-label="t('toolbar.new')" @click="$emit('new-document')">
           <AppIcon name="file-plus-2" :size="16" />
-          {{ t("toolbar.new") }}
+          <span class="hidden 2xl:inline">{{ t("toolbar.new") }}</span>
         </AppToolbarButton>
         <AppToolbarButton compact :title="t('toolbar.openDocument')" :aria-label="t('toolbar.openDocument')"
           @click="$emit('open-markdown')">
           <AppIcon name="folder-open" :size="16" />
-          {{ t("toolbar.open") }}
+          <span class="hidden 2xl:inline">{{ t("toolbar.open") }}</span>
         </AppToolbarButton>
-        <AppToolbarButton compact @click="$emit('save-markdown')">
+        <AppToolbarButton compact :title="t('toolbar.save')" :aria-label="t('toolbar.save')" @click="$emit('save-markdown')">
           <AppIcon name="save" :size="16" />
-          {{ t("toolbar.save") }}
+          <span class="hidden 2xl:inline">{{ t("toolbar.save") }}</span>
         </AppToolbarButton>
 
         <div class="h-4 w-px bg-slate-200/80 dark:bg-slate-800 mx-1"></div>
@@ -109,10 +134,36 @@ onBeforeUnmount(() => {
         </AppIconButton>
       </div>
 
+      <div v-if="activeWorkspace === 'create'" class="hidden items-center gap-0.5 rounded-lg border border-slate-200/80 bg-white p-0.5 dark:border-slate-700/80 dark:bg-slate-800/80 sm:inline-flex">
+        <button
+          v-for="mode in creationModes"
+          :key="mode.id"
+          type="button"
+          class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[12px] font-semibold transition-colors duration-150 cursor-pointer"
+          :class="
+            creationMode === mode.id
+              ? 'bg-blue-600 text-white shadow-sm dark:bg-blue-500 dark:text-white'
+              : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+          "
+          :aria-pressed="creationMode === mode.id"
+          :aria-label="t(mode.labelKey)"
+          :title="t(mode.labelKey)"
+          @click="$emit('select-creation-mode', mode.id)"
+        >
+          <AppIcon :name="mode.icon" :size="12" />
+          <span class="hidden xl:inline">{{ t(mode.labelKey) }}</span>
+        </button>
+      </div>
+
+      <div v-else class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+        <AppIcon :name="activeWorkspace === 'publish' ? 'upload' : 'bar-chart-3'" :size="15" />
+        <span>{{ t(activeWorkspace === 'publish' ? 'workspace.publishTitle' : 'workspace.opsTitle') }}</span>
+      </div>
+
       <!-- Right Toolbar Section: Theme Dropdown, System Dark Mode, Settings & Primary Export -->
-      <div class="inline-flex items-center gap-2.5">
+      <div class="inline-flex min-w-0 flex-1 items-center justify-end gap-2.5">
         <!-- Card Theme Dropdown Selector -->
-        <div class="relative" ref="themeDropdownRef">
+        <div v-if="activeWorkspace === 'create' && creationMode !== 'gallery'" class="relative hidden lg:block" ref="themeDropdownRef">
           <button type="button"
             class="flex h-8.5 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 shadow-2xs hover:bg-slate-50 transition font-medium dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700/80 cursor-pointer"
             @click="isThemeOpen = !isThemeOpen">
@@ -137,7 +188,7 @@ onBeforeUnmount(() => {
               <div class="flex flex-col flex-1 min-w-0">
                 <span class="truncate leading-tight">{{ getThemeLabel(themeItem) }}</span>
                 <span :title="getThemeDescription(themeItem)"
-                  class="text-[10px] text-slate-500 dark:text-slate-400 truncate group-hover:whitespace-normal group-hover:line-clamp-none mt-0.5 font-normal leading-snug">{{
+                  class="text-[10px] text-slate-500 dark:text-slate-400 truncate group-hover:whitespace-normal group-hover:line-clamp-none mt-0.5 text-[11px] font-normal leading-snug">{{
                     getThemeDescription(themeItem) }}</span>
               </div>
               <AppIcon v-if="themeItem.name === selectedTheme" name="check" :size="13"
@@ -147,11 +198,11 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- Vertical Divider -->
-        <div class="h-4.5 w-px bg-slate-200/80 dark:bg-slate-800 mx-0.5"></div>
+        <div v-if="activeWorkspace === 'create'" class="h-4.5 w-px bg-slate-200/80 dark:bg-slate-800 mx-0.5"></div>
 
         <!-- System Dark/Light Mode Switch Toggle -->
         <button type="button"
-          class="relative flex h-7.5 w-12 items-center rounded-full p-0.5 transition-colors border border-slate-200/80 cursor-pointer"
+          class="relative hidden h-7.5 w-12 items-center rounded-full p-0.5 transition-colors border border-slate-200/80 cursor-pointer xl:flex"
           :class="isDarkMode ? '!bg-slate-800 !border-slate-700' : '!bg-slate-100'"
           :aria-label="t('toolbar.appearance')" :title="t('toolbar.appearance')" @click="$emit('toggle-dark-mode')">
           <div
@@ -161,13 +212,23 @@ onBeforeUnmount(() => {
           </div>
         </button>
 
+        <AppIconButton v-if="creationMode !== 'gallery'" :aria-label="t('openmoji.title')" :title="t('openmoji.title')" @click="$emit('open-sticker-picker')">
+          <AppIcon name="smile" :size="16" />
+        </AppIconButton>
+
+        <AppIconButton :aria-label="t('assets.title')" :title="t('assets.title')" @click="$emit('open-asset-library')">
+          <AppIcon name="image" :size="16" />
+        </AppIconButton>
+
         <!-- Primary Export Button (Matching Screenshot) -->
-        <button type="button"
+        <button v-if="activeWorkspace === 'create' && creationMode !== 'poster'" type="button"
           class="inline-flex h-8.5 items-center rounded-lg !bg-blue-600 hover:!bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed px-3 text-xs font-bold !text-white shadow-xs active:scale-98 transition group cursor-pointer"
+          :aria-label="t('toolbar.exportTitle')"
+          :title="t('toolbar.exportTitle')"
           :disabled="isExporting"
           @click="$emit('export')">
-          <AppIcon :name="isExporting ? 'loader' : 'download'" :size="15" class="mr-1.5" :class="{ 'animate-spin': isExporting }" />
-          <span>{{ isExporting ? t("toolbar.exporting") : t("toolbar.export") }}</span>
+          <AppIcon :name="isDocumentExporting ? 'loader' : 'download'" :size="15" class="mr-1.5" :class="{ 'animate-spin': isDocumentExporting }" />
+          <span class="hidden xl:inline">{{ isDocumentExporting ? t("toolbar.exporting") : t("toolbar.export") }}</span>
         </button>
       </div>
     </div>
