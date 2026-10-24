@@ -80,7 +80,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["next-page", "previous-page", "select-page", "set-view-mode"]);
+const emit = defineEmits(["next-page", "previous-page", "select-page", "set-view-mode", "move-overlay-item"]);
 
 const artworkCardRef = ref(null);
 const isFullscreen = ref(false);
@@ -134,6 +134,7 @@ defineExpose({
         :show-bottom-right="showBottomRight"
         :custom-font-family="customFontFamily"
         @fullscreen="isFullscreen = true"
+        @move-overlay-item="emit('move-overlay-item', $event)"
       />
       <slot name="nav-right" />
     </div>
@@ -215,6 +216,7 @@ defineExpose({
             :show-bottom-right="showBottomRight"
             :custom-font-family="customFontFamily"
             class="shadow-2xl"
+            @move-overlay-item="emit('move-overlay-item', $event)"
           />
         </div>
       </div>

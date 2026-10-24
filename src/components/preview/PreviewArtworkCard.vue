@@ -28,7 +28,7 @@ const props = defineProps({
   customFontFamily: { type: String, default: "" },
 });
 
-const emit = defineEmits(["fullscreen", "copy"]);
+const emit = defineEmits(["fullscreen", "copy", "move-overlay-item"]);
 const previewRoot = ref(null);
 const artworkRef = ref(null);
 const fitScale = ref(1);
@@ -135,6 +135,7 @@ onBeforeUnmount(() => {
           :show-bottom-left="showBottomLeft"
           :show-bottom-right="showBottomRight"
           :custom-font-family="customFontFamily"
+          @move-overlay-item="emit('move-overlay-item', $event)"
         />
       </div>
 

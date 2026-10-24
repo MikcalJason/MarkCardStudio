@@ -548,6 +548,21 @@ function handleGalleryOverlay({ imageId, overlay }) {
   updateImage(imageId, { overlay });
 }
 
+// Dragging a decoration in the preview writes the final position once, on drop.
+function handleOverlayMove({ id, x, y } = {}) {
+  const image = activeGalleryImage.value;
+  if (!image || !id) return;
+  const overlay = image.overlay && typeof image.overlay === "object" ? image.overlay : { items: [] };
+  const items = Array.isArray(overlay.items) ? overlay.items : [];
+  if (!items.some((item) => item.id === id)) return;
+  updateImage(image.id, {
+    overlay: {
+      ...overlay,
+      items: items.map((item) => (item.id === id ? { ...item, x, y } : item)),
+    },
+  });
+}
+
 // The active gallery page maps straight back to its work image entry, so the
 // overlay panel always edits the picture the preview is showing.
 const activeGalleryImageIndex = computed(() => {
@@ -954,7 +969,8 @@ onBeforeUnmount(() => {
           :show-bottom-right="showBottomRight"
           :custom-font-family="customFontFamily"
           @add-page="handleAddPage" @delete-page="handleDeletePage" @move-page="handleMovePage" @next-page="nextPage"
-          @previous-page="previousPage" @select-page="selectPage" @set-zoom="setZoom" />
+          @previous-page="previousPage" @select-page="selectPage" @set-zoom="setZoom"
+          @move-overlay-item="handleOverlayMove" />
 
         <InspectorPanel
           v-if="rightSidebarDocked"

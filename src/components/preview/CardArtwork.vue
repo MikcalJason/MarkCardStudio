@@ -39,6 +39,8 @@ const props = defineProps({
   autoPrepare: { type: Boolean, default: true },
 });
 
+const emit = defineEmits(["move-overlay-item"]);
+
 const { t } = useI18n();
 const canvasElement = ref(null);
 const scrollAreaElement = ref(null);
@@ -122,6 +124,52 @@ function overlayPositionStyle(item) {
     fontSize: isSticker ? undefined : `${overlaySizePx(item)}px`,
     transform: `translate(-50%, -50%) rotate(${item.rotate}deg)`,
   };
+}
+
+// Previews may drag decorations directly; the export clone (autoPrepare: false)
+// must stay static. The position is only written back on pointerup so an
+// in-flight drag does not rebuild the page on every pointermove.
+const overlaysDraggable = computed(
+  () => Boolean(props.page?.gallery) && !props.page?.gallery?.empty && props.autoPrepare !== false,
+);
+const dragPositions = ref({});
+let overlayDragSession = null;
+
+function overlayItemStyle(item) {
+  const dragged = dragPositions.value[item.id];
+  return overlayPositionStyle(dragged ? { ...item, ...dragged } : item);
+}
+
+function beginOverlayDrag(event) {
+  if (!overlaysDraggable.value) return;
+  const target = event.currentTarget;
+  const id = target?.dataset?.overlayId;
+  const container = target?.closest?.(".gallery-overlay");
+  if (!id || !container) return;
+  event.preventDefault();
+  event.stopPropagation();
+  overlayDragSession = { id, rect: container.getBoundingClientRect() };
+  window.addEventListener("pointermove", moveOverlayDrag);
+  window.addEventListener("pointerup", endOverlayDrag, { once: true });
+  window.addEventListener("pointercancel", endOverlayDrag, { once: true });
+}
+
+function moveOverlayDrag(event) {
+  if (!overlayDragSession) return;
+  const { rect, id } = overlayDragSession;
+  const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / Math.max(1, rect.width)));
+  const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / Math.max(1, rect.height)));
+  dragPositions.value = { ...dragPositions.value, [id]: { x, y } };
+}
+
+function endOverlayDrag() {
+  if (!overlayDragSession) return;
+  const { id } = overlayDragSession;
+  const position = dragPositions.value[id];
+  overlayDragSession = null;
+  window.removeEventListener("pointermove", moveOverlayDrag);
+  window.removeEventListener("pointercancel", endOverlayDrag);
+  if (position) emit("move-overlay-item", { id, ...position });
 }
 
 const posterCanvasStyle = computed(() => {
@@ -300,6 +348,8 @@ watch(
 
 onBeforeUnmount(() => {
   disposeEChartsDiagrams(canvasElement.value);
+  window.removeEventListener("pointermove", moveOverlayDrag);
+  window.removeEventListener("pointercancel", endOverlayDrag);
 });
 
 defineExpose({
@@ -419,21 +469,30 @@ defineExpose({
               </span>
             </template>
 
-            <div v-if="overlayItems.length" class="gallery-overlay" aria-hidden="true">
+            <div
+              v-if="overlayItems.length"
+              class="gallery-overlay"
+              :class="{ 'gallery-overlay--interactive': overlaysDraggable }"
+              aria-hidden="true"
+            >
               <template v-for="item in overlayItems" :key="item.id">
                 <img
                   v-if="item.kind === 'sticker'"
                   :src="item.src"
                   :alt="item.alt || ''"
                   class="gallery-sticker"
-                  :style="overlayPositionStyle(item)"
+                  :style="overlayItemStyle(item)"
+                  :data-overlay-id="item.id"
                   loading="eager"
                   draggable="false"
+                  @pointerdown="beginOverlayDrag"
                 />
                 <span
                   v-else
                   class="gallery-overlay__text"
-                  :style="{ ...overlayPositionStyle(item), color: item.color, fontWeight: item.weight }"
+                  :style="{ ...overlayItemStyle(item), color: item.color, fontWeight: item.weight }"
+                  :data-overlay-id="item.id"
+                  @pointerdown="beginOverlayDrag"
                 >{{ item.text }}</span>
               </template>
             </div>

@@ -663,6 +663,11 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
       image.style.opacity = "0";
     });
 
+    // Decorations are flattened by hand after the capture: WebKit's foreignObject
+    // does not reliably paint this absolutely positioned layer.
+    const overlayLayer = posterNode.querySelector(".gallery-overlay");
+    if (overlayLayer) overlayLayer.style.visibility = "hidden";
+
     let canvas = null;
     try {
       for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -681,9 +686,11 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
       echartsImages.forEach((image, index) => {
         image.style.opacity = echartsImageOpacities[index];
       });
+      if (overlayLayer) overlayLayer.style.visibility = "";
     }
     compositeContentImages(canvas, posterNode);
     compositeCoverStickers(canvas, posterNode);
+    compositeGalleryOverlayText(canvas, posterNode);
     compositeEChartsImages(canvas, posterNode);
     exportApp.unmount();
     container.remove();
@@ -1105,6 +1112,80 @@ function galleryPhotoMissingFrom(canvas, root, backgroundColor) {
   }
   // Text and stickers occupy a small part of the card, so allow a few hits.
   return total > 0 && blank / total >= 0.85;
+}
+
+/// Flattens the free-text decorations onto the captured card. The DOM layer is
+/// hidden during capture, so this is the only place those texts are painted —
+/// wrapping, alignment, rotation, and the shadow mirror `card-gallery.css`.
+function compositeGalleryOverlayText(canvas, root) {
+  const context = canvas.getContext("2d");
+  const rootRect = root.getBoundingClientRect();
+  if (!context || rootRect.width <= 0 || rootRect.height <= 0) return;
+  const scaleX = canvas.width / rootRect.width;
+  const scaleY = canvas.height / rootRect.height;
+
+  for (const node of root.querySelectorAll(".gallery-overlay__text")) {
+    const text = node.textContent || "";
+    if (!text.trim()) continue;
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    const style = getComputedStyle(node);
+    const fontSize = (Number.parseFloat(style.fontSize) || 12) * scaleY;
+    const lineHeight = fontSize * 1.3;
+    const maxWidth = rect.width * scaleX;
+
+    context.save();
+    context.translate(
+      (rect.left - rootRect.left + rect.width / 2) * scaleX,
+      (rect.top - rootRect.top + rect.height / 2) * scaleY,
+    );
+    const angle = transformAngle(style.transform);
+    if (angle) context.rotate(angle);
+    context.font = `${style.fontWeight || 700} ${fontSize}px ${style.fontFamily || "sans-serif"}`;
+    context.fillStyle = style.color || "#ffffff";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.shadowColor = "rgba(2, 6, 23, 0.5)";
+    context.shadowBlur = 10 * scaleY;
+    context.shadowOffsetY = 2 * scaleY;
+
+    const lines = wrapCanvasText(context, text, maxWidth);
+    const startY = -((lines.length - 1) * lineHeight) / 2;
+    lines.forEach((line, index) => context.fillText(line, 0, startY + index * lineHeight));
+    context.restore();
+  }
+}
+
+function transformAngle(transform) {
+  const match = String(transform || "").match(/^matrix\(([^)]+)\)$/);
+  if (!match) return 0;
+  const [a, b] = match[1].split(",").map((value) => Number.parseFloat(value));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.atan2(b, a);
+}
+
+/// Mirrors `white-space: pre-wrap` + `overflow-wrap: anywhere`: explicit breaks
+/// are kept and overlong content wraps per character.
+function wrapCanvasText(context, text, maxWidth) {
+  const lines = [];
+  for (const paragraph of String(text).split("\n")) {
+    if (!paragraph) {
+      lines.push("");
+      continue;
+    }
+    let current = "";
+    for (const character of paragraph) {
+      const candidate = current + character;
+      if (current && context.measureText(candidate).width > maxWidth) {
+        lines.push(current);
+        current = character;
+      } else {
+        current = candidate;
+      }
+    }
+    lines.push(current);
+  }
+  return lines.length ? lines : [""];
 }
 
 function compositeContentImages(canvas, root) {

@@ -94,6 +94,7 @@ const emit = defineEmits([
   "previous-page",
   "select-page",
   "set-zoom",
+  "move-overlay-item",
 ]);
 
 const previewCanvasRef = ref(null);
@@ -169,6 +170,7 @@ onBeforeUnmount(() => {
       :custom-font-family="customFontFamily"
       @select-page="$emit('select-page', $event)"
       @set-view-mode="viewMode = $event"
+      @move-overlay-item="$emit('move-overlay-item', $event)"
     >
       <template #nav-left>
         <AppIconButton
