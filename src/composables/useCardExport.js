@@ -1079,24 +1079,29 @@ function galleryPhotoMissingFrom(canvas, root, backgroundColor) {
   const samples = 7;
   let blank = 0;
   let total = 0;
-  for (let row = 0; row < samples; row += 1) {
-    for (let column = 0; column < samples; column += 1) {
-      const x = Math.min(canvas.width - 1, Math.round(left + ((column + 0.5) * width) / samples));
-      const y = Math.min(canvas.height - 1, Math.round(top + ((row + 0.5) * height) / samples));
-      if (x < 0 || y < 0) continue;
-      const pixel = context.getImageData(x, y, 1, 1).data;
-      total += 1;
-      if (
-        allowed.some(
-          ([red, green, blue]) =>
-            Math.abs(pixel[0] - red) <= 8 &&
-            Math.abs(pixel[1] - green) <= 8 &&
-            Math.abs(pixel[2] - blue) <= 8,
-        )
-      ) {
-        blank += 1;
+  try {
+    for (let row = 0; row < samples; row += 1) {
+      for (let column = 0; column < samples; column += 1) {
+        const x = Math.min(canvas.width - 1, Math.round(left + ((column + 0.5) * width) / samples));
+        const y = Math.min(canvas.height - 1, Math.round(top + ((row + 0.5) * height) / samples));
+        if (x < 0 || y < 0) continue;
+        const pixel = context.getImageData(x, y, 1, 1).data;
+        total += 1;
+        if (
+          allowed.some(
+            ([red, green, blue]) =>
+              Math.abs(pixel[0] - red) <= 8 &&
+              Math.abs(pixel[1] - green) <= 8 &&
+              Math.abs(pixel[2] - blue) <= 8,
+          )
+        ) {
+          blank += 1;
+        }
       }
     }
+  } catch {
+    // A tainted canvas cannot be sampled; let the capture stand as-is.
+    return false;
   }
   // Text and stickers occupy a small part of the card, so allow a few hits.
   return total > 0 && blank / total >= 0.85;
