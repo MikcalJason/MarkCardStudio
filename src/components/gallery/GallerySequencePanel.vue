@@ -26,6 +26,14 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  sceneThumbs: {
+    type: Object,
+    default: () => ({}),
+  },
+  sceneActive: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits([
@@ -36,6 +44,7 @@ const emit = defineEmits([
   "select-image",
   "open-cover-studio",
   "remove-cover",
+  "calibrate-image",
 ]);
 
 const { t } = useI18n();
@@ -106,49 +115,33 @@ function onDragEnd() {
     </header>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-2.5">
-      <div class="relative mb-2">
+      <!-- Without a design the first image is the cover, so its own row already carries the tag. -->
+      <div v-if="coverDesign" class="relative mb-2">
         <div
-          class="flex w-full items-center gap-2.5 rounded-xl border bg-white/80 p-2 text-left transition dark:bg-slate-900/60"
-          :class="[
+          class="flex w-full cursor-pointer items-center gap-2.5 rounded-xl border bg-white/80 p-2 text-left transition hover:border-blue-300 hover:bg-blue-50/40 dark:bg-slate-900/60 dark:hover:border-blue-500/60 dark:hover:bg-blue-950/20"
+          :class="
             coverActive
               ? 'border-blue-400 ring-1 ring-blue-500/15 dark:border-blue-500/70'
-              : 'border-slate-200/90 dark:border-slate-700/80',
-            coverDesign ? 'cursor-pointer hover:border-blue-300 hover:bg-blue-50/40 dark:hover:border-blue-500/60 dark:hover:bg-blue-950/20' : '',
-          ]"
-          @click="coverDesign && $emit('open-cover-studio')"
+              : 'border-slate-200/90 dark:border-slate-700/80'
+          "
+          @click="$emit('open-cover-studio')"
         >
         <div class="relative h-20 w-16 shrink-0 overflow-hidden rounded-lg border border-slate-200/80 bg-slate-900 dark:border-slate-700/80">
-          <CoverDesignArtwork v-if="coverDesign" :design="coverDesign" compact />
-          <AssetThumbnail
-            v-else-if="images[0]"
-            :asset="{ assetId: images[0].assetId, alt: images[0].alt, name: images[0].caption }"
-            :get-thumb="getThumb"
-            :alt="images[0].alt || images[0].caption"
-          />
-          <div v-else class="flex h-full flex-col items-center justify-center gap-1 bg-[radial-gradient(circle_at_30%_20%,#818cf8,transparent_60%),linear-gradient(135deg,#312e81,#0f172a)] text-white/70">
-            <AppIcon name="layout-grid" :size="16" />
-          </div>
+          <CoverDesignArtwork :design="coverDesign" compact />
         </div>
         <span class="min-w-0 flex-1">
           <span class="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:bg-amber-950/50 dark:text-amber-300">
             {{ t("gallery.cover") }}
           </span>
-          <strong v-if="coverDesign" class="mt-1 block truncate text-[11px] font-bold text-slate-700 dark:text-slate-200">
+          <strong class="mt-1 block truncate text-[11px] font-bold text-slate-700 dark:text-slate-200">
             {{ coverDesign.title }}
           </strong>
-          <span v-else class="mt-1 block truncate text-[11px] text-slate-500 dark:text-slate-400">
-            {{ images.length ? t("gallery.firstImageCover") : t("gallery.noCover") }}
-          </span>
-          <span
-            v-if="coverDesign"
-            class="mt-0.5 block text-[10px] font-semibold text-blue-600 dark:text-blue-300"
-          >
+          <span class="mt-0.5 block text-[10px] font-semibold text-blue-600 dark:text-blue-300">
             {{ t("gallery.openCoverStudio") }} →
           </span>
         </span>
         </div>
         <button
-          v-if="coverDesign"
           type="button"
           class="absolute right-1.5 top-1.5 z-10 grid h-6 w-6 place-items-center rounded-md bg-white/90 text-slate-400 shadow-sm hover:bg-rose-50 hover:text-rose-600 dark:bg-slate-800/90 dark:hover:bg-rose-950/50 dark:hover:text-rose-300"
           :aria-label="t('gallery.removeCover')"
@@ -201,7 +194,14 @@ function onDragEnd() {
           </span>
 
           <div class="h-16 w-12 shrink-0 overflow-hidden rounded-lg border border-slate-200/80 dark:border-slate-700/80">
+            <img
+              v-if="sceneThumbs[image.id]"
+              :src="sceneThumbs[image.id]"
+              :alt="image.alt || image.caption"
+              class="h-full w-full object-cover"
+            />
             <AssetThumbnail
+              v-else
               :asset="{ assetId: image.assetId, alt: image.alt, name: image.caption }"
               :get-thumb="getThumb"
               :alt="image.alt || image.caption"
@@ -210,6 +210,13 @@ function onDragEnd() {
 
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5">
+              <span
+                v-if="sceneThumbs[image.id]"
+                class="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"
+                :title="t('gallery.looks.scene')"
+              >
+                <AppIcon name="tablet" :size="10" class="inline-block align-[-1px]" />
+              </span>
               <span
                 v-if="coverAssetId === image.assetId"
                 class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:bg-amber-950/50 dark:text-amber-300"
@@ -238,6 +245,18 @@ function onDragEnd() {
               </button>
             </div>
             <div class="mt-1 flex items-center justify-end gap-0.5">
+              <!-- Scene corners are corrected per image: a card that sits badly
+                   in a photo gets fixed here without moving every other one. -->
+              <button
+                v-if="sceneActive"
+                type="button"
+                class="grid h-6 w-6 place-items-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                :title="t('gallery.calibrateImage')"
+                :aria-label="t('gallery.calibrateImage')"
+                @click.stop="$emit('calibrate-image', image)"
+              >
+                <AppIcon name="maximize" :size="12" />
+              </button>
               <button
                 type="button"
                 class="grid h-6 w-6 place-items-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-30 dark:hover:bg-slate-800 dark:hover:text-slate-200"

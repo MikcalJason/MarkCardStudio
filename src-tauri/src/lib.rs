@@ -2,6 +2,7 @@ mod assets;
 mod channels;
 mod files;
 mod publish;
+mod qr_preview;
 mod wechat;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -111,6 +112,9 @@ pub fn run() {
             assets::read_asset_file,
             assets::mirror_asset,
             assets::delete_asset_file,
+            qr_preview::qr_preview_start,
+            qr_preview::qr_preview_stats,
+            qr_preview::qr_preview_stop,
             exit_application
         ])
         .build(tauri::generate_context!())

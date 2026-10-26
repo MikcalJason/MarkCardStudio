@@ -21,19 +21,26 @@ import OpsWorkspace from "./components/workspaces/OpsWorkspace.vue";
 import PreviewPanel from "./components/PreviewPanel.vue";
 import PublishDialog from "./components/publish/PublishDialog.vue";
 import PublishWorkspace from "./components/workspaces/PublishWorkspace.vue";
+import QrPreviewDialog from "./components/preview/QrPreviewDialog.vue";
+import SceneMockupDialog from "./components/mockup/SceneMockupDialog.vue";
+import ScenePickerDialog from "./components/mockup/ScenePickerDialog.vue";
+import SceneCalibrationDialog from "./components/mockup/SceneCalibrationDialog.vue";
 import StickerPickerDialog from "./components/StickerPickerDialog.vue";
 import { useAssetLibrary } from "./composables/useAssetLibrary";
 import { useCardExport } from "./composables/useCardExport";
+import { useGalleryScene } from "./composables/useGalleryScene";
 import { usePublishBundle } from "./composables/usePublishBundle";
 import { usePublishHistory } from "./composables/usePublishHistory";
 import { usePublishPlan } from "./composables/usePublishPlan";
 import { useStudioDocument } from "./composables/useStudioDocument";
 import { useUpdater } from "./composables/useUpdater";
+import { useQrPreview } from "./composables/useQrPreview";
 import { useWork } from "./composables/useWork";
 import { createTint } from "./utils/imageTint.js";
 import { useWorkspaceUi } from "./composables/useWorkspaceUi";
 import { useAppPreferences } from "./i18n/index.js";
 import { getThemeByName } from "./config/themes.js";
+import { clearImageQuadOverrides } from "./storage/sceneMockupTemplates.js";
 
 const exportFormats = ["PNG", "JPG", "PDF", "长图(PNG)"];
 const settingTabs = ["平台", "分页", "背景", "字体", "标头"];
@@ -174,8 +181,26 @@ const coverDate = computed(() => {
   return `${now.getFullYear()}.${String(now.getMonth() + 1).padStart(2, "0")}`;
 });
 
+// The active gallery page maps straight back to its work image entry, so the
+// overlay panel always edits the picture the preview is showing.
+const activeGalleryImageIndex = computed(() => {
+  if (creationMode.value !== "gallery") return -1;
+  const index = selectedPage.value?.gallery?.index;
+  return Number.isInteger(index) ? index : -1;
+});
+
+const activeGalleryImage = computed(() => {
+  if (activeGalleryImageIndex.value < 0) return null;
+  return currentWork.value?.images?.[activeGalleryImageIndex.value] || null;
+});
+
 ensureWork({ sourcePath: sourcePath.value, title: documentTitle.value });
-setGallerySource(creationMode, currentWork);
+const galleryScene = useGalleryScene({
+  workRef: currentWork,
+  platformRef: selectedPlatform,
+  activeImageRef: activeGalleryImage,
+});
+setGallerySource(creationMode, currentWork, galleryScene.backdrops);
 
 function syncWorkNow() {
   syncFromDocument({
@@ -243,6 +268,12 @@ watch(
 const previewPanelRef = ref(null);
 const settingsDialogOpen = ref(false);
 const publishDialogOpen = ref(false);
+const sceneMockupOpen = ref(false);
+const scenePickerOpen = ref(false);
+// Per-image corner correction: the gallery opens this for the image being
+// judged, so fixing one card never moves the rest of the gallery.
+const sceneCalibrationOpen = ref(false);
+const sceneCalibrationImageId = ref("");
 const closeDialogOpen = ref(false);
 const isClosingApplication = ref(false);
 const viewportWidth = ref(typeof window !== "undefined" ? window.innerWidth : 1600);
@@ -288,6 +319,7 @@ const { exportCurrentPage, exportToAssetLibrary, exportAction } = useCardExport(
   customFontFamily,
   customFontEmbedCss,
   assetLibrary,
+  ensurePagesReady: galleryScene.ensureReady,
 });
 
 const publishPlan = usePublishPlan({
@@ -321,6 +353,7 @@ const publishBundle = usePublishBundle({
   showBottomRight,
   customFontFamily,
   customFontEmbedCss,
+  ensurePagesReady: galleryScene.ensureReady,
 });
 
 const publishHistory = usePublishHistory();
@@ -328,6 +361,119 @@ const publishHistory = usePublishHistory();
 function openPublishDialog() {
   publishHistory.refresh();
   publishDialogOpen.value = true;
+}
+
+// Shared per-page render options for every "real card pixels" consumer
+// (scene mockups, scan-to-preview). It must keep matching renderPageToImage.
+const cardRenderOptions = computed(() => ({
+  width: selectedPlatform.value?.width || 1080,
+  height: selectedPlatform.value?.height || 1440,
+  themeClass: selectedThemeClass.value,
+  transparent: transparentBackground.value,
+  backgroundColor: backgroundColor.value,
+  backgroundType: backgroundType.value,
+  backgroundValue: backgroundValue.value,
+  showTopLeft: showTopLeft.value,
+  showTopRight: showTopRight.value,
+  showBottomLeft: showBottomLeft.value,
+  showBottomRight: showBottomRight.value,
+  customFontFamily: customFontFamily.value,
+  customFontEmbedCss: customFontEmbedCss.value,
+}));
+
+const qrPreview = useQrPreview({
+  pages,
+  renderOptions: cardRenderOptions,
+  selectedFormat,
+  ensurePagesReady: galleryScene.ensureReady,
+});
+const {
+  isOpen: qrPanelOpen,
+  status: qrStatus,
+  progressText: qrProgressText,
+  errorText: qrErrorText,
+  url: qrUrl,
+  reachable: qrReachable,
+  qrSvg: qrQrSvg,
+  pageCount: qrPageCount,
+  sizeLabel: qrSizeLabel,
+  formatLabel: qrFormatLabel,
+  remainingSecs: qrRemainingSecs,
+  phoneOpened: qrPhoneOpened,
+  thumbs: qrThumbs,
+  openQrPreview,
+  regeneratePreview: qrRegenerate,
+} = qrPreview;
+
+function openScenePicker() {
+  galleryScene.ensurePreviews();
+  scenePickerOpen.value = true;
+}
+
+function openSceneMockup() {
+  // Gallery mode treats a scene as a generated backdrop for every image, so it
+  // opens the picker; write mode still needs the export dialog (page preview,
+  // calibration, multi-scene export).
+  if (creationMode.value === "gallery") {
+    openScenePicker();
+    return;
+  }
+  sceneMockupOpen.value = true;
+}
+
+function handleScenePickerSelect(sceneId) {
+  if (!sceneId) return;
+  setGalleryLayout({ mode: "raw", background: "scene", sceneId });
+  scenePickerOpen.value = false;
+}
+
+function handleScenePickerClear() {
+  setGalleryLayout({ background: "theme", sceneId: "" });
+  scenePickerOpen.value = false;
+}
+
+function handleScenePickerCalibrated() {
+  galleryScene.refreshCalibration();
+  galleryScene.ensurePreviews();
+}
+
+// Corner corrections belong to one image: the gallery opens this for the card
+// the user is looking at, and only that composite is rebuilt.
+const sceneLookActive = computed(
+  () =>
+    creationMode.value === "gallery" &&
+    Boolean(galleryLayout.value?.sceneId) &&
+    galleryLayout.value?.background === "scene",
+);
+
+const sceneCalibrationCardSrc = computed(() => {
+  const id = sceneCalibrationImageId.value;
+  if (!id) return "";
+  const image = (currentWork.value?.images || []).find((item) => item.id === id);
+  return image?.src || "";
+});
+
+function openImageCalibration(image) {
+  const target = image?.id ? image : activeGalleryImage.value;
+  const sceneId = galleryLayout.value?.sceneId;
+  if (!target?.id || !sceneId) return;
+  sceneCalibrationImageId.value = target.id;
+  sceneCalibrationOpen.value = true;
+}
+
+function handleImageCalibrationSaved() {
+  galleryScene.refreshCalibration();
+  if (scenePickerOpen.value) galleryScene.ensurePreviews();
+}
+
+function handleImageCalibrationClose() {
+  sceneCalibrationOpen.value = false;
+  sceneCalibrationImageId.value = "";
+}
+
+function handleSceneMockupClose() {
+  sceneMockupOpen.value = false;
+  galleryScene.refreshCalibration();
 }
 
 function applyChannelCanvas(channel) {
@@ -500,6 +646,11 @@ async function handleWorkspaceAddToGallery(assets) {
   await addGalleryAssets(list);
 }
 
+function handleAddToGalleryFromDialog(assets) {
+  closeAssetDialog();
+  handleWorkspaceAddToGallery(assets);
+}
+
 function handleAddPage() {
   if (creationMode.value === "gallery") {
     openAssetPicker();
@@ -511,6 +662,8 @@ function handleAddPage() {
 function removeGalleryImage(image) {
   if (!image) return;
   removeImage(image.id);
+  // Its per-image corner corrections are keyed by a never-reused id.
+  clearImageQuadOverrides(image.id);
   assetLibrary.removeUsage(image.assetId, {
     workId: currentWork.value?.id || "",
     ref: `gallery:${image.id}`,
@@ -562,19 +715,6 @@ function handleOverlayMove({ id, x, y } = {}) {
     },
   });
 }
-
-// The active gallery page maps straight back to its work image entry, so the
-// overlay panel always edits the picture the preview is showing.
-const activeGalleryImageIndex = computed(() => {
-  if (creationMode.value !== "gallery") return -1;
-  const index = selectedPage.value?.gallery?.index;
-  return Number.isInteger(index) ? index : -1;
-});
-
-const activeGalleryImage = computed(() => {
-  if (activeGalleryImageIndex.value < 0) return null;
-  return currentWork.value?.images?.[activeGalleryImageIndex.value] || null;
-});
 
 // The sequence panel speaks in image indices while preview pages may start with
 // a designed cover page, so selecting an image needs that page offset.
@@ -685,6 +825,9 @@ const inspectorProps = computed(() => ({
   galleryTitle: workTitle.value,
   galleryImage: activeGalleryImage.value,
   galleryImageIndex: activeGalleryImageIndex.value,
+  gallerySceneStatus: galleryScene.status.value,
+  gallerySceneProgress: galleryScene.progress.value,
+  gallerySceneFailedCount: galleryScene.failedCount.value,
   hasCoverDesign: Boolean(currentWork.value?.coverDesign),
   publish: publishPlan,
 }));
@@ -751,6 +894,9 @@ const inspectorEvents = {
   "add-gallery-images": openAssetPicker,
   "open-asset-library": openAssetManager,
   "open-cover-studio": openCoverStudio,
+  "open-gallery-scene": openScenePicker,
+  "retry-gallery-scene": galleryScene.retry,
+  "calibrate-gallery-image": () => openImageCalibration(activeGalleryImage.value),
   "open-publish-center": () => setWorkspace("publish"),
 };
 
@@ -887,6 +1033,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", handleBeforeUnload);
   removeCloseRequestedListener?.();
   removeExitRequestedListener?.();
+  qrPreview.dispose();
 });
 </script>
 
@@ -919,6 +1066,8 @@ onBeforeUnmount(() => {
       @select-creation-mode="handleSelectCreationMode"
       @open-asset-library="openAssetManager"
       @open-sticker-picker="openStickerPicker"
+      @open-scene-mockup="openSceneMockup"
+      @open-qr-preview="openQrPreview"
     />
 
     <main v-if="activeWorkspace === 'create'" class="relative grid min-h-0 min-w-0 flex-1 overflow-hidden transition-[grid-template-columns] duration-200"
@@ -947,6 +1096,8 @@ onBeforeUnmount(() => {
         :cover-active="Boolean(currentWork?.coverDesign) && activePageIndex === 0"
         :get-thumb="assetLibrary.getThumbUrl"
         :is-desktop="assetLibrary.isDesktop.value"
+        :scene-thumbs="galleryScene.thumbs.value"
+        :scene-active="sceneLookActive"
         @add-images="openAssetPicker"
         @remove-image="handleRemoveGalleryImage"
         @move-image="handleMovePage"
@@ -954,6 +1105,7 @@ onBeforeUnmount(() => {
         @select-image="handleGalleryImageSelect"
         @open-cover-studio="openCoverStudio"
         @remove-cover="handleRemoveCoverDesign"
+        @calibrate-image="openImageCalibration"
       />
 
       <template v-if="creationMode !== 'poster'">
@@ -1053,6 +1205,7 @@ onBeforeUnmount(() => {
           :cover-active="Boolean(currentWork?.coverDesign) && activePageIndex === 0"
           :get-thumb="assetLibrary.getThumbUrl"
           :is-desktop="assetLibrary.isDesktop.value"
+          :scene-thumbs="galleryScene.thumbs.value"
           @add-images="openAssetPicker"
           @remove-image="handleRemoveGalleryImage"
           @move-image="handleMovePage"
@@ -1060,6 +1213,7 @@ onBeforeUnmount(() => {
           @select-image="handleGalleryImageSelect"
           @open-cover-studio="openCoverStudio"
           @remove-cover="handleRemoveCoverDesign"
+          @calibrate-image="openImageCalibration"
         />
       </div>
 
@@ -1091,6 +1245,7 @@ onBeforeUnmount(() => {
       @close="closeAssetDialog"
       @insert="handleAssetInsert"
       @pick="handleAssetPick"
+      @add-to-gallery="handleAddToGalleryFromDialog"
     />
     <CoverStudioDialog
       :open="coverStudioOpen"
@@ -1117,6 +1272,54 @@ onBeforeUnmount(() => {
       :model-value="coverStickerSelection"
       @update:model-value="setCoverStickerSelection"
       @close="closeStickerPicker"
+    />
+    <SceneMockupDialog
+      :open="sceneMockupOpen"
+      :pages="pages"
+      :page-index="activePageIndex"
+      :render-options="cardRenderOptions"
+      :export-path="exportPath"
+      :source-path="sourcePath"
+      :is-tauri="runtimeIsTauri"
+      @close="handleSceneMockupClose"
+      @folder-picked="exportPath = $event"
+      @exported="exportMessage = $event"
+    />
+    <QrPreviewDialog
+      :open="qrPanelOpen"
+      :status="qrStatus"
+      :progress-text="qrProgressText"
+      :error-text="qrErrorText"
+      :url="qrUrl"
+      :reachable="qrReachable"
+      :qr-svg="qrQrSvg"
+      :page-count="qrPageCount"
+      :size-label="qrSizeLabel"
+      :format-label="qrFormatLabel"
+      :remaining-secs="qrRemainingSecs"
+      :phone-opened="qrPhoneOpened"
+      :thumbs="qrThumbs"
+      @close="qrPanelOpen = false"
+      @regenerate="qrRegenerate"
+    />
+    <ScenePickerDialog
+      :open="scenePickerOpen"
+      :selected-id="galleryLayout.sceneId || ''"
+      :previews="galleryScene.previews.value"
+      :preview-pending="galleryScene.previewPending.value"
+      :card-src="galleryScene.previewImage.value?.src || ''"
+      @close="scenePickerOpen = false"
+      @select="handleScenePickerSelect"
+      @clear="handleScenePickerClear"
+      @calibrated="handleScenePickerCalibrated"
+    />
+    <SceneCalibrationDialog
+      :open="sceneCalibrationOpen"
+      :scene-id="galleryLayout.sceneId || ''"
+      :image-id="sceneCalibrationImageId"
+      :card-src="sceneCalibrationCardSrc"
+      @saved="handleImageCalibrationSaved"
+      @close="handleImageCalibrationClose"
     />
     <AppUpdateDialog />
     <AppStatusbar

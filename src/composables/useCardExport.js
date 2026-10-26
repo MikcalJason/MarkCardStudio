@@ -38,6 +38,7 @@ export function useCardExport({
   customFontFamily,
   customFontEmbedCss,
   assetLibrary,
+  ensurePagesReady,
 }) {
   // Which export is running, so only the button that was clicked shows a
   // spinner instead of every export button lighting up together.
@@ -80,7 +81,7 @@ export function useCardExport({
       const isBottomLeft = showBottomLeft?.value ?? true;
       const isBottomRight = showBottomRight?.value ?? true;
 
-      const pagesToExport = scope === "single"
+      let pagesToExport = scope === "single"
         ? [allPages[activePageIndex.value] || allPages[0]]
         : allPages;
 
@@ -105,6 +106,15 @@ export function useCardExport({
       exportMessage.value = t("runtime.preparingExport", { count: pagesToExport.length });
 
       try {
+        await ensurePagesReady?.();
+        // Readiness replaces the page array (measured pagination, gallery scene
+        // composites), so the export list is re-read from the live ref here.
+        const readyPages = pages?.value || [];
+        if (readyPages.length) {
+          pagesToExport = scope === "single"
+            ? [readyPages[activePageIndex.value] || readyPages[0]]
+            : readyPages;
+        }
         if (format === "PDF") {
           await exportAsPDF(pagesToExport, platform, jpegQuality, themeClass, isTransparent, bgHex, bgType, bgVal, targetFolder, outputFolderName, isTopLeft, isTopRight, isBottomLeft, isBottomRight);
         } else if (format === "长图(PNG)") {
@@ -371,9 +381,15 @@ export function useCardExport({
       let added = 0;
       let duplicates = 0;
 
-      for (let i = 0; i < allPages.length; i += 1) {
-        exportMessage.value = t("runtime.renderingPage", { current: i + 1, total: allPages.length });
-        const { blob } = await renderPageToImage(allPages[i], {
+      exportMessage.value = t("runtime.preparingExport", { count: allPages.length });
+      await ensurePagesReady?.();
+      // Readiness can replace the page array; export the live one, not the
+      // pre-ready snapshot taken before the await.
+      const exportPages = pages?.value?.length ? pages.value : allPages;
+
+      for (let i = 0; i < exportPages.length; i += 1) {
+        exportMessage.value = t("runtime.renderingPage", { current: i + 1, total: exportPages.length });
+        const { blob } = await renderPageToImage(exportPages[i], {
           width: platform.width,
           height: platform.height,
           themeClass: selectedThemeClass?.value || "theme-swiss-grid",
@@ -384,7 +400,7 @@ export function useCardExport({
           format: ext === "jpg" ? "JPG" : "PNG",
           quality: jpegQuality,
           pageNumber: i + 1,
-          totalPages: allPages.length,
+          totalPages: exportPages.length,
           showTopLeft: showTopLeft?.value ?? true,
           showTopRight: showTopRight?.value ?? showPageNumber?.value ?? true,
           showBottomLeft: showBottomLeft?.value ?? true,
@@ -915,6 +931,19 @@ function convertImageElementToDataUrl(img) {
   }
 }
 
+async function prepareGalleryPhotoForExport(img, renderPixelRatio) {
+  const normalized = rasterizeContentImage(img, renderPixelRatio, { preferJpeg: true });
+  if (normalized) {
+    img.srcset = "";
+    img.src = normalized;
+    await waitForImageDecode(img);
+  }
+  if (img.complete && img.naturalWidth > 0) {
+    return replaceGalleryImageWithBackground(img);
+  }
+  return false;
+}
+
 /**
  * Make every image a ready-to-render data URL before html-to-image clones the
  * export DOM. Local images are already data URLs, while remote/blob images are
@@ -935,17 +964,8 @@ async function inlineImagesForExport(root, renderPixelRatio) {
         // Large local files can make html-to-image's cloned SVG exceed WebView
         // limits even though the live preview can decode the original source.
         // Gallery cards are full-bleed photos, so they get the same treatment.
-        const isGalleryPhoto = img.classList.contains("card-gallery__image");
-        if (isGalleryPhoto) {
-          const normalized = rasterizeContentImage(img, renderPixelRatio, { preferJpeg: true });
-          if (normalized) {
-            img.src = normalized;
-            await waitForImageDecode(img);
-          }
-          if (img.complete && img.naturalWidth > 0) {
-            return replaceGalleryImageWithBackground(img);
-          }
-          return false;
+        if (img.classList.contains("card-gallery__image")) {
+          return prepareGalleryPhotoForExport(img, renderPixelRatio);
         }
         if (img.classList.contains("card-image") || img.classList.contains("card-inline-image")) {
           const normalized = rasterizeContentImage(img, renderPixelRatio);
@@ -976,6 +996,11 @@ async function inlineImagesForExport(root, renderPixelRatio) {
         img.srcset = "";
         img.src = dataUrl;
         const ready = await waitForImageDecode(img);
+        // Scene backdrops reach the exporter as blob URLs, so they take this
+        // path instead of the data-URL branch above.
+        if (img.classList.contains("card-gallery__image")) {
+          return prepareGalleryPhotoForExport(img, renderPixelRatio);
+        }
         return ready || replaceFailedContentImage(img);
       }
 
@@ -1024,11 +1049,13 @@ function rasterizeContentImage(img, renderPixelRatio, { preferJpeg = false } = {
 
     const sourceType = img.src.match(/^data:([^;,]+)/i)?.[1]?.toLowerCase() || "";
     // Photos are re-encoded as JPEG: a multi-megabyte PNG inside html-to-image's
-    // cloned SVG is what WebKit silently drops, blanking the card.
+    // cloned SVG is what WebKit silently drops, blanking the card. This is the
+    // only lossy generation a gallery photo gets, so it stays high enough to
+    // keep warped scene-mockup type from breaking up.
     const opaque = preferJpeg && isOpaqueImage(img);
     const outputType =
       sourceType === "image/jpeg" || (preferJpeg && opaque) ? "image/jpeg" : "image/png";
-    return canvas.toDataURL(outputType, outputType === "image/jpeg" ? 0.92 : undefined);
+    return canvas.toDataURL(outputType, outputType === "image/jpeg" ? 0.95 : undefined);
   } catch (error) {
     console.warn("Failed to normalize local image for export", error);
     return null;

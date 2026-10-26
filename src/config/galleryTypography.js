@@ -33,8 +33,10 @@ export const GALLERY_FONT_PRESETS = [
 ];
 
 export const GALLERY_TITLE_WEIGHTS = [600, 700, 800, 900];
-// Where the area around a template gallery card gets its color.
-export const GALLERY_BACKGROUNDS = ["theme", "blurred", "tint"];
+// Where the area around a template gallery card gets its color. `scene`
+// replaces each picture with a composite generated at runtime, so it is never
+// stored as image bytes in the work.
+export const GALLERY_BACKGROUNDS = ["theme", "blurred", "tint", "scene"];
 export const TITLE_RATIO_RANGE = { min: 0.028, max: 0.06 };
 export const CAPTION_RATIO_RANGE = { min: 0.02, max: 0.044 };
 

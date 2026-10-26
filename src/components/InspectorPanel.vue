@@ -52,6 +52,18 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  gallerySceneStatus: {
+    type: String,
+    default: "idle",
+  },
+  gallerySceneProgress: {
+    type: Object,
+    default: () => ({ done: 0, total: 0 }),
+  },
+  gallerySceneFailedCount: {
+    type: Number,
+    default: 0,
+  },
 });
 
 const emit = defineEmits([
@@ -63,6 +75,9 @@ const emit = defineEmits([
   "open-cover-studio",
   "open-publish-center",
   "select-gallery-font",
+  "open-gallery-scene",
+  "retry-gallery-scene",
+  "calibrate-gallery-image",
 ]);
 
 const attrs = useAttrs();
@@ -143,12 +158,18 @@ function selectSegment(id) {
         :custom-fonts="attrs.customFonts || []"
         :selected-font-id="attrs.selectedFontId || 'theme-default'"
         :has-cover-design="props.hasCoverDesign"
+        :scene-status="props.gallerySceneStatus"
+        :scene-progress="props.gallerySceneProgress"
+        :scene-failed-count="props.gallerySceneFailedCount"
         @update-layout="emit('update-gallery-layout', $event)"
         @update-title="emit('update-gallery-title', $event)"
         @add-images="emit('add-gallery-images')"
         @open-cover-studio="emit('open-cover-studio')"
         @open-library="emit('open-asset-library')"
         @select-gallery-font="emit('select-gallery-font', $event)"
+        @open-scene-picker="emit('open-gallery-scene')"
+        @retry-scene="emit('retry-gallery-scene')"
+        @calibrate-image="emit('calibrate-gallery-image')"
       />
       <GalleryOverlayPanel
         v-if="props.creationMode === 'gallery'"

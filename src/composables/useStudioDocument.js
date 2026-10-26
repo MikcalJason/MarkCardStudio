@@ -7,6 +7,7 @@ import { DEFAULT_THEME, THEME_LIST, getThemeByName } from "../config/themes.js";
 import { resolveCoverStickerSelection } from "../config/coverStickers.js";
 import { resolveOverlay } from "../utils/imageOverlay.js";
 import { normalizeGalleryType, GALLERY_BACKGROUNDS } from "../config/galleryTypography.js";
+import { normalizeSceneId } from "../config/sceneMockups.js";
 import { i18n } from "../i18n/index.js";
 
 function t(key, params) {
@@ -733,10 +734,12 @@ export function useStudioDocument() {
   let suppressDocumentWatchers = false;
   let galleryModeRef = null;
   let galleryWorkRef = null;
+  let gallerySceneBackdropsRef = null;
 
-  function setGallerySource(creationModeRef, workRef) {
+  function setGallerySource(creationModeRef, workRef, sceneBackdropsRef = null) {
     galleryModeRef = creationModeRef || null;
     galleryWorkRef = workRef || null;
+    gallerySceneBackdropsRef = sceneBackdropsRef || null;
     if (galleryModeRef) {
       watch(galleryModeRef, () => updatePagesNow());
     }
@@ -748,6 +751,11 @@ export function useStudioDocument() {
         },
         { deep: true },
       );
+    }
+    if (gallerySceneBackdropsRef) {
+      watch(gallerySceneBackdropsRef, () => {
+        if (galleryModeRef?.value === "gallery") updatePagesNow();
+      });
     }
     updatePagesNow();
   }
@@ -790,6 +798,7 @@ export function useStudioDocument() {
           fallbackTitle: t("workspace.untitled"),
           emptyLabel: t("gallery.emptyCardTitle"),
           emptyDescription: t("gallery.emptyCardDesc"),
+          sceneBackdrops: gallerySceneBackdropsRef?.value || {},
         });
         if (activePageIndex.value > pages.value.length - 1) {
           activePageIndex.value = Math.max(0, pages.value.length - 1);
@@ -1335,6 +1344,7 @@ function buildGalleryPages(work, options = {}) {
     background: GALLERY_BACKGROUNDS.includes(work?.gallery?.background)
       ? work.gallery.background
       : "theme",
+    sceneId: normalizeSceneId(work?.gallery?.sceneId),
     type: normalizeGalleryType(work?.gallery?.type),
   };
   const title = work?.title || options.fallbackTitle || t("workspace.untitled");
@@ -1395,6 +1405,10 @@ function buildGalleryPages(work, options = {}) {
   const contentPages = images.map((image, index) => {
     const pageNumber = index + (coverDesign ? 2 : 1);
     const isLegacyCover = !coverDesign && index === 0;
+    const sceneBackdrop = layout.background === "scene" && layout.sceneId
+      ? options.sceneBackdrops?.[image.id] || ""
+      : "";
+    const gallerySrc = sceneBackdrop || image.src || "";
     return {
       label: isLegacyCover ? t("runtime.cover") : String(pageNumber).padStart(2, "0"),
       kicker: options.kicker || "@MarkCard",
@@ -1411,12 +1425,13 @@ function buildGalleryPages(work, options = {}) {
       quote: options.quote || t("runtime.defaultQuote"),
       gallery: {
         empty: false,
-        src: image.src || "",
+        src: gallerySrc,
         alt: image.alt || image.caption || "",
         caption: image.caption || "",
         index,
         total: images.length,
-        missing: !image.src,
+        missing: !gallerySrc,
+        sceneBackdrop: Boolean(sceneBackdrop),
         overlay: resolveOverlay(image.overlay),
         tint: image.tint || null,
         ...layout,

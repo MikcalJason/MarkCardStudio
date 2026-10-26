@@ -1,6 +1,7 @@
 import { computed, ref, watch } from "vue";
 import { normalizeOverlay } from "../utils/imageOverlay.js";
 import { DEFAULT_GALLERY_TYPE, GALLERY_BACKGROUNDS, normalizeGalleryType } from "../config/galleryTypography.js";
+import { normalizeSceneId } from "../config/sceneMockups.js";
 import { normalizeTint } from "../utils/imageTint.js";
 
 const WORKS_KEY = "markcard_works_v1";
@@ -18,6 +19,7 @@ export function createDefaultGalleryLayout() {
     showNumbers: false,
     frame: "bleed",
     background: "theme",
+    sceneId: "",
     type: { ...DEFAULT_GALLERY_TYPE },
   };
 }
@@ -124,6 +126,7 @@ function normalizeWork(raw) {
       background: GALLERY_BACKGROUNDS.includes(raw.gallery?.background)
         ? raw.gallery.background
         : "theme",
+      sceneId: normalizeSceneId(raw.gallery?.sceneId),
       type: normalizeGalleryType(raw.gallery?.type),
     },
     variants: Array.isArray(raw.variants)

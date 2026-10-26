@@ -3,6 +3,7 @@ import { ref, watch, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import AppIcon from "../AppIcon.vue";
 import { createDefaultGalleryLayout } from "../../composables/useWork.js";
+import { findSceneTemplate } from "../../config/sceneMockups.js";
 import {
   GALLERY_FONT_PRESETS,
   GALLERY_TITLE_WEIGHTS,
@@ -35,9 +36,21 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  sceneStatus: {
+    type: String,
+    default: "idle",
+  },
+  sceneProgress: {
+    type: Object,
+    default: () => ({ done: 0, total: 0 }),
+  },
+  sceneFailedCount: {
+    type: Number,
+    default: 0,
+  },
 });
 
-const emit = defineEmits(["update-layout", "add-images", "open-library", "update-title", "open-cover-studio", "open-overlay-editor", "select-gallery-font"]);
+const emit = defineEmits(["update-layout", "add-images", "open-library", "update-title", "open-cover-studio", "open-overlay-editor", "select-gallery-font", "open-scene-picker", "retry-scene", "calibrate-image"]);
 const { t } = useI18n();
 const titleDraft = ref(props.title || "");
 const isRaw = computed(() => props.layout.mode === "raw");
@@ -49,17 +62,35 @@ const LOOKS = [
   { id: "theme", mode: "template", background: "theme" },
   { id: "blurred", mode: "template", background: "blurred" },
   { id: "tint", mode: "template", background: "tint" },
+  { id: "scene", mode: "raw", background: "scene" },
 ];
 const activeLook = computed(() => {
+  if (props.layout.background === "scene") return "scene";
   if (props.layout.mode === "raw") return "photo";
   const background = props.layout.background || "theme";
   return background === "theme" ? "theme" : background;
+});
+
+const sceneTemplate = computed(() => findSceneTemplate(props.layout.sceneId));
+const sceneStatusText = computed(() => {
+  if (!props.layout.sceneId) return t("gallery.sceneNone");
+  const progress = props.sceneProgress || { done: 0, total: 0 };
+  if (props.sceneStatus === "generating") {
+    return t("gallery.sceneGenerating", { done: progress.done, total: progress.total });
+  }
+  if (props.sceneStatus === "error") {
+    return t("gallery.sceneFailed", { count: props.sceneFailedCount });
+  }
+  if (props.sceneStatus === "waiting") return t("gallery.sceneWaiting");
+  if (props.sceneStatus === "ready") return t("gallery.sceneReady", { count: props.imageCount });
+  return "";
 });
 
 function applyLook(id) {
   const look = LOOKS.find((item) => item.id === id);
   if (!look) return;
   emit("update-layout", { mode: look.mode, background: look.background });
+  if (id === "scene" && !props.layout.sceneId) emit("open-scene-picker");
 }
 
 watch(
@@ -162,11 +193,51 @@ function commitTitle() {
           </button>
         </div>
         <p class="mt-1.5 text-[10px] leading-4 text-slate-500 dark:text-slate-400">
-          {{ t(activeLook === "photo" ? "gallery.rawHint" : activeLook === "theme" ? "gallery.cardHint" : "gallery.backgroundHint") }}
+          {{ t(activeLook === "photo" ? "gallery.rawHint" : activeLook === "theme" ? "gallery.cardHint" : activeLook === "scene" ? "gallery.sceneHint" : "gallery.backgroundHint") }}
         </p>
       </div>
 
-      <div>
+      <div v-if="activeLook === 'scene'" class="rounded-lg border border-slate-200/80 p-2.5 dark:border-slate-700/80">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">{{ t("gallery.sceneLabel") }}</span>
+          <span class="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+            {{ sceneTemplate ? t(sceneTemplate.labelKey) : t("gallery.sceneNone") }}
+          </span>
+        </div>
+        <button
+          type="button"
+          class="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          @click="$emit('open-scene-picker')"
+        >
+          <AppIcon name="tablet" :size="13" />
+          {{ sceneTemplate ? t("gallery.sceneChange") : t("gallery.scenePick") }}
+        </button>
+        <!-- Corners are corrected for the selected image; the picker keeps the
+             scene default for every image. -->
+        <button
+          v-if="sceneTemplate"
+          type="button"
+          class="mt-1.5 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-blue-50 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+          @click="$emit('calibrate-image')"
+        >
+          <AppIcon name="maximize" :size="13" />
+          {{ t("gallery.calibrateImage") }}
+        </button>
+        <p v-if="sceneStatusText" class="mt-1.5 text-[10px] leading-4 text-slate-500 dark:text-slate-400">
+          {{ sceneStatusText }}
+        </p>
+        <button
+          v-if="sceneStatus === 'error'"
+          type="button"
+          class="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400"
+          @click="$emit('retry-scene')"
+        >
+          <AppIcon name="rotate-ccw" :size="11" />
+          {{ t("gallery.sceneRetry") }}
+        </button>
+      </div>
+
+      <div v-if="activeLook !== 'scene'">
         <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">{{ t("gallery.fit") }}</span>
         <div class="mt-1 grid grid-cols-2 gap-1 rounded-lg border border-slate-200/80 bg-white p-1 dark:border-slate-700/80 dark:bg-slate-800/80">
           <button

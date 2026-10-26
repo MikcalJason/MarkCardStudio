@@ -54,6 +54,8 @@ const emit = defineEmits([
   "select-creation-mode",
   "open-asset-library",
   "open-sticker-picker",
+  "open-scene-mockup",
+  "open-qr-preview",
 ]);
 
 import { THEME_LIST } from "../config/themes.js";
@@ -218,6 +220,23 @@ onBeforeUnmount(() => {
 
         <AppIconButton :aria-label="t('assets.title')" :title="t('assets.title')" @click="$emit('open-asset-library')">
           <AppIcon name="image" :size="16" />
+        </AppIconButton>
+
+        <AppIconButton
+          v-if="activeWorkspace === 'create' && creationMode !== 'poster'"
+          :aria-label="t('sceneMockup.toolbar')"
+          :title="t('sceneMockup.toolbar')"
+          @click="$emit('open-scene-mockup')">
+          <AppIcon name="tablet" :size="16" />
+        </AppIconButton>
+
+        <AppIconButton
+          v-if="activeWorkspace === 'create' && creationMode !== 'poster'"
+          :aria-label="t('toolbar.qrPreviewTitle')"
+          :title="t('toolbar.qrPreviewTitle')"
+          :disabled="isExporting"
+          @click="$emit('open-qr-preview')">
+          <AppIcon name="qrcode" :size="16" />
         </AppIconButton>
 
         <!-- Primary Export Button (Matching Screenshot) -->

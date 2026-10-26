@@ -118,6 +118,7 @@ export function usePublishBundle({
   showBottomRight,
   customFontFamily,
   customFontEmbedCss,
+  ensurePagesReady,
 }) {
   const isGenerating = ref(false);
   const progress = ref({ stage: "idle", current: 0, total: 0 });
@@ -156,6 +157,16 @@ export function usePublishBundle({
     const abortSignal = signal || null;
     isGenerating.value = true;
     progress.value = { stage: "prepare", current: 0, total: plan.images.length };
+
+    // Gallery scene backdrops are generated on demand, so a bundle must not be
+    // written from pages that still point at the plain photo.
+    try {
+      await ensurePagesReady?.();
+    } catch (error) {
+      isGenerating.value = false;
+      progress.value = { stage: "idle", current: 0, total: 0 };
+      throw error?.message ? error : new Error(String(error));
+    }
 
     const created = await createWriter().catch((error) => {
       isGenerating.value = false;
