@@ -55,7 +55,15 @@ pub struct CustomFontData {
     data_url: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalUrlLaunch {
+    opened: bool,
+    browser: String,
+}
+
 const MAX_CUSTOM_FONT_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_EXTERNAL_URL_LEN: usize = 2048;
 
 #[tauri::command]
 pub async fn pick_export_folder(app: AppHandle) -> Result<Option<String>, String> {
@@ -362,6 +370,33 @@ pub async fn open_export_folder(app: AppHandle, path: String) -> Result<(), Stri
         }
 
         Ok(())
+    })
+    .await
+    .map_err(|err| format!("Task execution failed: {err}"))?
+}
+
+/// Opens an http(s) page in the OS browser.
+///
+/// Some creator studios only work with a Chrome extension installed, so
+/// `prefer_chrome` asks for Chrome first and falls back to the default browser.
+/// The URL never reaches a shell: it is validated, then passed as a single argv.
+#[tauri::command]
+pub async fn open_external_url(
+    url: String,
+    prefer_chrome: bool,
+) -> Result<ExternalUrlLaunch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let url = validate_external_url(&url)?;
+        if prefer_chrome && launch_in_chrome(&url) {
+            return Ok(ExternalUrlLaunch {
+                opened: true,
+                browser: "chrome".to_string(),
+            });
+        }
+        Ok(ExternalUrlLaunch {
+            opened: launch_in_default_browser(&url),
+            browser: "default".to_string(),
+        })
     })
     .await
     .map_err(|err| format!("Task execution failed: {err}"))?
@@ -784,6 +819,98 @@ fn stored_custom_font_path(fonts_dir: &Path, font: &CustomFont) -> PathBuf {
     fonts_dir.join(format!("{}.{}", font.id, extension))
 }
 
+fn validate_external_url(raw: &str) -> Result<String, String> {
+    let url = raw.trim();
+    if url.is_empty() {
+        return Err("External URL is empty".to_string());
+    }
+    if url.len() > MAX_EXTERNAL_URL_LEN {
+        return Err("External URL is too long".to_string());
+    }
+    if url.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
+        return Err("External URL contains whitespace or control characters".to_string());
+    }
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("Only http and https URLs can be opened".to_string());
+    }
+    Ok(url.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn launch_in_chrome(url: &str) -> bool {
+    // `open -a` resolves by application name and fails when none matches.
+    ["Google Chrome", "Google Chrome Beta", "Chromium"]
+        .iter()
+        .any(|app| {
+            std::process::Command::new("open")
+                .args(["-a", app, url])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn launch_in_chrome(url: &str) -> bool {
+    let mut candidates = Vec::new();
+    for key in ["ProgramFiles", "ProgramFiles(x86)", "LocalAppData"] {
+        if let Ok(base) = std::env::var(key) {
+            candidates.push(
+                PathBuf::from(base)
+                    .join("Google")
+                    .join("Chrome")
+                    .join("Application")
+                    .join("chrome.exe"),
+            );
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .map(|exe| {
+            std::process::Command::new(exe)
+                .arg(url)
+                .spawn()
+                .is_ok()
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn launch_in_chrome(url: &str) -> bool {
+    ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
+        .iter()
+        .any(|binary| std::process::Command::new(binary).arg(url).spawn().is_ok())
+}
+
+#[cfg(target_os = "macos")]
+fn launch_in_default_browser(url: &str) -> bool {
+    std::process::Command::new("open")
+        .arg(url)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn launch_in_default_browser(url: &str) -> bool {
+    // Not `cmd /C start`: the command line would be re-parsed and a crafted
+    // query string could chain a second command.
+    std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn()
+        .is_ok()
+}
+
+#[cfg(target_os = "linux")]
+fn launch_in_default_browser(url: &str) -> bool {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .is_ok()
+}
+
 fn is_remote_or_data_url(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     lower.starts_with("http://")
@@ -816,4 +943,46 @@ fn file_name(path: &Path) -> String {
         .and_then(|file_name| file_name.to_str())
         .unwrap_or_default()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_https_urls_and_trims_edges() {
+        assert_eq!(
+            validate_external_url(" https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=image ").unwrap(),
+            "https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=image"
+        );
+        assert!(validate_external_url("http://example.com").is_ok());
+    }
+
+    #[test]
+    fn rejects_non_http_schemes() {
+        for candidate in [
+            "",
+            "   ",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,<h1>x</h1>",
+            "chrome://settings",
+            "//example.com",
+        ] {
+            assert!(validate_external_url(candidate).is_err(), "{candidate}");
+        }
+    }
+
+    #[test]
+    fn rejects_whitespace_and_control_characters() {
+        assert!(validate_external_url("https://example.com/a b").is_err());
+        assert!(validate_external_url("https://example.com\nnext").is_err());
+        assert!(validate_external_url("https://example.com/\u{0000}").is_err());
+    }
+
+    #[test]
+    fn rejects_overlong_urls() {
+        let long = format!("https://example.com/{}", "a".repeat(MAX_EXTERNAL_URL_LEN));
+        assert!(validate_external_url(&long).is_err());
+    }
 }

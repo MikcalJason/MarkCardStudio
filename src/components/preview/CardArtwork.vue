@@ -135,6 +135,16 @@ const overlaysDraggable = computed(
 const dragPositions = ref({});
 let overlayDragSession = null;
 
+// Once a committed position arrives through the page prop, drop the in-flight
+// override so later slider edits are not masked by the stale dragged value.
+watch(
+  () => props.page?.gallery?.overlay,
+  () => {
+    dragPositions.value = {};
+  },
+  { deep: true },
+);
+
 function overlayItemStyle(item) {
   const dragged = dragPositions.value[item.id];
   return overlayPositionStyle(dragged ? { ...item, ...dragged } : item);
@@ -170,6 +180,29 @@ function endOverlayDrag() {
   window.removeEventListener("pointermove", moveOverlayDrag);
   window.removeEventListener("pointercancel", endOverlayDrag);
   if (position) emit("move-overlay-item", { id, ...position });
+}
+
+// Wheel over a decoration resizes it; the commit is debounced so a scroll burst
+// writes back once instead of rebuilding the work per tick.
+let overlayWheelTimer = null;
+
+function overlayWheel(event) {
+  if (!overlaysDraggable.value) return;
+  const id = event.currentTarget?.dataset?.overlayId;
+  const item = overlayItems.value.find((entry) => entry.id === id);
+  if (!item) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const current = dragPositions.value[id] || { x: item.x, y: item.y, size: item.size };
+  const factor = Math.exp(-event.deltaY * 0.0015);
+  const size = Math.min(0.6, Math.max(0.02, current.size * factor));
+  dragPositions.value = { ...dragPositions.value, [id]: { ...current, size } };
+  if (overlayWheelTimer) clearTimeout(overlayWheelTimer);
+  overlayWheelTimer = setTimeout(() => {
+    overlayWheelTimer = null;
+    const position = dragPositions.value[id];
+    if (position) emit("move-overlay-item", { id, ...position });
+  }, 160);
 }
 
 const posterCanvasStyle = computed(() => {
@@ -280,8 +313,11 @@ const renderedBody = computed(() => {
   return renderBlocksToHtml(blocks);
 });
 
+// A gallery page is decorated through work.images[].overlay, and the picker for
+// these stickers is hidden in gallery mode, so the themed cover fallback would
+// paint ornaments on a photo card the user has no way to clear.
 const coverStickers = computed(() => {
-  if (!props.page?.cover || props.page?.coverDesign) return [];
+  if (!props.page?.cover || props.page?.coverDesign || isGallerySurface.value) return [];
   if (Array.isArray(props.page.stickers) && props.page.stickers.length) {
     return props.page.stickers;
   }
@@ -350,6 +386,7 @@ onBeforeUnmount(() => {
   disposeEChartsDiagrams(canvasElement.value);
   window.removeEventListener("pointermove", moveOverlayDrag);
   window.removeEventListener("pointercancel", endOverlayDrag);
+  if (overlayWheelTimer) clearTimeout(overlayWheelTimer);
 });
 
 defineExpose({
@@ -486,6 +523,7 @@ defineExpose({
                   loading="eager"
                   draggable="false"
                   @pointerdown="beginOverlayDrag"
+                  @wheel="overlayWheel"
                 />
                 <span
                   v-else
@@ -493,6 +531,7 @@ defineExpose({
                   :style="{ ...overlayItemStyle(item), color: item.color, fontWeight: item.weight }"
                   :data-overlay-id="item.id"
                   @pointerdown="beginOverlayDrag"
+                  @wheel="overlayWheel"
                 >{{ item.text }}</span>
               </template>
             </div>

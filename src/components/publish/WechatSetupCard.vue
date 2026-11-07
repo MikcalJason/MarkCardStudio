@@ -26,7 +26,13 @@ const PROBE_LABEL_KEYS = {
   draft: "publishFlow.credentials.probe.draft",
   freepublish: "publishFlow.credentials.probe.freepublish",
   articleStats: "publishFlow.credentials.probe.articleStats",
+  articleTotal: "publishFlow.credentials.probe.articleTotal",
+  articleRead: "publishFlow.credentials.probe.articleRead",
+  articleShare: "publishFlow.credentials.probe.articleShare",
   userStats: "publishFlow.credentials.probe.userStats",
+  userCumulate: "publishFlow.credentials.probe.userCumulate",
+  messageStats: "publishFlow.credentials.probe.messageStats",
+  interfaceSummary: "publishFlow.credentials.probe.interfaceSummary",
   userList: "publishFlow.credentials.probe.userList",
 };
 

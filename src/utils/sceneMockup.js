@@ -88,6 +88,10 @@ export function loadSceneImage(src) {
       image.onerror = () => reject(new Error(`Failed to load scene: ${src}`));
       image.src = src;
     });
+    // A failed decode must not become the cached answer for the whole session:
+    // the file can reappear (a restored asset, a slower disk) and every caller
+    // would otherwise keep receiving the same rejection.
+    promise.catch(() => sceneImageCache.delete(src));
     sceneImageCache.set(src, promise);
   }
   return sceneImageCache.get(src);
@@ -97,6 +101,17 @@ export function loadSceneImage(src) {
 // a full-catalog preview never keeps every full-resolution scene resident.
 export function releaseSceneImage(src) {
   sceneImageCache.delete(src);
+}
+
+// The pooled intermediates are sized for the current scene page (tens of MB at
+// 2160×2880). They are worth keeping across one batch or one drag, but not for
+// the rest of the session, so a run releases them when it ends.
+export function releaseSceneScratch() {
+  scratchCanvases.forEach((canvas) => {
+    canvas.width = 0;
+    canvas.height = 0;
+  });
+  scratchCanvases.clear();
 }
 
 export function normalizeQuad(quad, fallback = null) {
@@ -321,7 +336,7 @@ function fillContainMargins(context, cardSource, layout) {
 // - `cover`: fills and crops, for flat prints whose ratio is already near 3:4.
 // None of them leaves a see-through margin, because the photo's blank plate
 // showing through is exactly what reads as an empty band.
-function prepareCardSurface(cardSource, destinationQuad, fit, padding = 0) {
+function prepareCardSurface(cardSource, destinationQuad, fit, padding = 0, options = {}) {
   const sourceWidth = cardSource.naturalWidth || cardSource.width;
   const sourceHeight = cardSource.naturalHeight || cardSource.height;
   if (!sourceWidth || !sourceHeight) return cardSource;
@@ -330,10 +345,11 @@ function prepareCardSurface(cardSource, destinationQuad, fit, padding = 0) {
   if (!destination.width || !destination.height) return cardSource;
   if (fit !== "cover" && fit !== "contain" && fit !== "fill") return cardSource;
 
+  const { maxLongSide = 2400, minLongSide = 600, oversample = 2 } = options;
   const aspect = destination.width / destination.height;
   const longSide = Math.min(
-    2400,
-    Math.max(600, Math.round(Math.max(destination.width, destination.height) * 2)),
+    maxLongSide,
+    Math.max(minLongSide, Math.round(Math.max(destination.width, destination.height) * oversample)),
   );
   let surfaceWidth = aspect >= 1 ? longSide : Math.max(2, Math.round(longSide * aspect));
   let surfaceHeight = aspect >= 1 ? Math.max(2, Math.round(longSide / aspect)) : longSide;
@@ -703,6 +719,7 @@ export function composeSceneMockup({
   cornerRadius = 0,
   fit = "cover",
   padding = 0,
+  fast = false,
   width = SCENE_MOCKUP_OUTPUT.width,
   height = SCENE_MOCKUP_OUTPUT.height,
 }) {
@@ -731,7 +748,16 @@ export function composeSceneMockup({
     offsetY + normalizedQuad[key][1] * drawnHeight,
   ]);
 
-  const cardSurface = prepareCardSurface(cardImage, destinationQuad, fit, padding);
+  const cardSurface = prepareCardSurface(
+    cardImage,
+    destinationQuad,
+    fit,
+    padding,
+    // A live drag renders every frame: keep the intermediate surface at the
+    // destination's own size so the warp takes the single-tap bilinear path
+    // instead of area-averaging an oversized card, which is the frame-drop cost.
+    fast ? { maxLongSide: 1200, minLongSide: 128, oversample: 1 } : undefined,
+  );
   const layer = warpCardIntoQuad(context, cardSurface, destinationQuad, cornerRadius);
   if (!layer) return canvas;
   const localQuad = destinationQuad.map(([x, y]) => [x - layer.x, y - layer.y]);

@@ -12,6 +12,7 @@ const FIELD_PATTERNS = {
 };
 const NUMERIC_FIELDS = ["reads", "shares", "favorites", "newFollowers", "lostFollowers"];
 const DELIMITERS = [",", "\t", ";"];
+const MAX_SKIP_DETAILS = 50;
 
 function normalizeHeader(value) {
   return String(value ?? "")
@@ -21,9 +22,13 @@ function normalizeHeader(value) {
 
 function parseWithDelimiter(text, delimiter) {
   const rows = [];
+  const numbers = [];
   let row = [];
   let cell = "";
   let quoted = false;
+  // Original 1-based line numbers survive blank-row removal, so skip reasons
+  // can point at the row the user sees in their spreadsheet.
+  let line = 1;
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
     if (quoted) {
@@ -47,6 +52,8 @@ function parseWithDelimiter(text, delimiter) {
     } else if (char === "\n") {
       row.push(cell);
       rows.push(row);
+      numbers.push(line);
+      line += 1;
       row = [];
       cell = "";
     } else if (char !== "\r") {
@@ -55,14 +62,26 @@ function parseWithDelimiter(text, delimiter) {
   }
   row.push(cell);
   rows.push(row);
-  const cleaned = rows.filter((items) => items.some((item) => String(item).trim()));
+  numbers.push(line);
+  const cleaned = [];
+  const cleanedNumbers = [];
+  rows.forEach((items, index) => {
+    if (!items.some((item) => String(item).trim())) return;
+    cleaned.push(items);
+    cleanedNumbers.push(numbers[index]);
+  });
   const width = cleaned.reduce((max, items) => Math.max(max, items.length), 0);
-  return { headers: cleaned[0] || [], rows: cleaned.slice(1), width };
+  return {
+    headers: cleaned[0] || [],
+    rows: cleaned.slice(1),
+    rowNumbers: cleanedNumbers.slice(1),
+    width,
+  };
 }
 
 export function parseDelimitedText(text) {
   const clean = String(text ?? "").replace(/^\uFEFF/, "").trim();
-  if (!clean) return { headers: [], rows: [], width: 0 };
+  if (!clean) return { headers: [], rows: [], rowNumbers: [], width: 0 };
   const best = DELIMITERS.map((delimiter) => parseWithDelimiter(clean, delimiter)).sort(
     (left, right) => right.width - left.width,
   )[0];
@@ -121,7 +140,7 @@ export function parseNumberCell(value) {
 }
 
 export function parseImportText(text) {
-  const { headers, rows, width } = parseDelimitedText(text);
+  const { headers, rows, rowNumbers, width } = parseDelimitedText(text);
   if (!headers.length || width < 2) return { error: "noHeader", headers, rows: [] };
   const mapping = detectMapping(headers);
   if (mapping.date === undefined) {
@@ -129,11 +148,17 @@ export function parseImportText(text) {
   }
   const aggregated = new Map();
   let skipped = 0;
-  for (const row of rows) {
+  const skippedRows = [];
+  const pushSkip = (index, reason, value) => {
+    if (skippedRows.length >= MAX_SKIP_DETAILS) return;
+    skippedRows.push({ number: rowNumbers[index] ?? index + 2, reason, value });
+  };
+  rows.forEach((row, index) => {
     const date = parseDateCell(row[mapping.date]);
     if (!date) {
       skipped += 1;
-      continue;
+      pushSkip(index, "date", String(row[mapping.date] ?? "").trim().slice(0, 24));
+      return;
     }
     const day = aggregated.get(date) || {
       date,
@@ -152,12 +177,13 @@ export function parseImportText(text) {
     }
     if (!hasValue) {
       skipped += 1;
-      continue;
+      pushSkip(index, "empty", "");
+      return;
     }
     aggregated.set(date, day);
-  }
+  });
   const records = [...aggregated.values()].sort((left, right) => left.date.localeCompare(right.date));
-  if (!records.length) return { error: "noRows", headers, mapping, rows: [] };
+  if (!records.length) return { error: "noRows", headers, mapping, rows: [], skipped, skippedRows };
   const fields = NUMERIC_FIELDS.filter((field) => mapping[field] !== undefined);
   return {
     error: "",
@@ -166,6 +192,7 @@ export function parseImportText(text) {
     fields,
     records,
     skipped,
+    skippedRows,
     mappedLabels: Object.fromEntries(
       fields.map((field) => [field, String(headers[mapping[field]] ?? "").trim()]),
     ),

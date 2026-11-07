@@ -8,19 +8,31 @@ const TEMPLATE_BY_ID = new Map(
 );
 
 // A stored correction describes one particular version of a photo's panel. When
-// the shipped calibration changes, an old correction is no longer an adjustment
-// but a stale offset that reads as "the card is placed wrong", so the store is
-// versioned by the template quads themselves.
-const TEMPLATE_VERSION = (() => {
+// that photo or its shipped calibration changes, the correction is no longer an
+// adjustment but a stale offset that reads as "the card is placed wrong" — so
+// every scene carries its own signature and only the stale scene is dropped.
+// Bumping `imageVersion` on a template is how a re-generated photo with the same
+// id invalidates its corrections.
+const SIGNATURE_CACHE = new Map();
+
+function sceneSignature(sceneId) {
+  if (SIGNATURE_CACHE.has(sceneId)) return SIGNATURE_CACHE.get(sceneId);
+  const template = TEMPLATE_BY_ID.get(sceneId);
+  if (!template) return "";
+  const text = [
+    sceneId,
+    template.image || "",
+    template.imageVersion || "",
+    SCENE_QUAD_POINTS.map((key) => template.quad[key].join(",")).join(";"),
+  ].join("|");
   let hash = 5381;
-  for (const template of SCENE_MOCKUP_TEMPLATES) {
-    const text = `${template.id}:${SCENE_QUAD_POINTS.map((key) => template.quad[key].join(",")).join(";")}`;
-    for (let index = 0; index < text.length; index += 1) {
-      hash = ((hash << 5) + hash + text.charCodeAt(index)) | 0;
-    }
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(index)) | 0;
   }
-  return String(hash);
-})();
+  const signature = String(hash);
+  SIGNATURE_CACHE.set(sceneId, signature);
+  return signature;
+}
 
 // Calibration has two levels, because one correction cannot be right for every
 // card: a scene default (the panel of that photo) and a per-image correction for
@@ -37,23 +49,27 @@ function readStore() {
   }
   const scenes = {};
   const images = {};
-  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return { scenes, images };
-  // A correction saved against a different shipped calibration (including the
-  // very first, unversioned shape) is an offset, not an adjustment: drop it so
-  // the card never sits where the photo no longer is.
-  if (stored.version !== TEMPLATE_VERSION) {
-    writeStore({ scenes, images });
-    return { scenes, images };
+  const signatures = {};
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return { scenes, images, signatures };
   }
 
-  const rawScenes =
-    stored.scenes && typeof stored.scenes === "object" ? stored.scenes : stored;
+  // Corrections are kept per scene and validated against that scene's current
+  // signature, so adding or re-calibrating one scene no longer wipes the rest.
+  // A store written before signatures existed cannot be validated: it is an
+  // offset against an unknown calibration, so it is dropped.
+  const rawSignatures =
+    stored.signatures && typeof stored.signatures === "object" ? stored.signatures : {};
+  const isCurrent = (sceneId) =>
+    Boolean(rawSignatures[sceneId]) && rawSignatures[sceneId] === sceneSignature(sceneId);
+
+  const rawScenes = stored.scenes && typeof stored.scenes === "object" ? stored.scenes : {};
   for (const [sceneId, quad] of Object.entries(rawScenes)) {
     const template = TEMPLATE_BY_ID.get(sceneId);
     if (!template || !quad || typeof quad !== "object") continue;
-    // Skips the sibling `images` map when the v1 shape is read as scenes.
-    if (!("tl" in quad)) continue;
+    if (!("tl" in quad) || !isCurrent(sceneId)) continue;
     scenes[sceneId] = normalizeQuad(quad, template.quad);
+    signatures[sceneId] = rawSignatures[sceneId];
   }
 
   const rawImages = stored.images && typeof stored.images === "object" ? stored.images : {};
@@ -63,17 +79,22 @@ function readStore() {
     for (const [sceneId, quad] of Object.entries(byScene)) {
       const template = TEMPLATE_BY_ID.get(sceneId);
       if (!template || !quad || typeof quad !== "object") continue;
+      if (!isCurrent(sceneId)) continue;
       entries[sceneId] = normalizeQuad(quad, template.quad);
+      signatures[sceneId] = rawSignatures[sceneId];
     }
     if (Object.keys(entries).length) images[imageId] = entries;
   }
 
-  return { scenes, images };
+  return { scenes, images, signatures };
 }
 
-function writeStore({ scenes, images }) {
+function writeStore({ scenes, images, signatures = {} }) {
   try {
-    localStorage.setItem(OVERRIDES_KEY, JSON.stringify({ version: TEMPLATE_VERSION, scenes, images }));
+    localStorage.setItem(
+      OVERRIDES_KEY,
+      JSON.stringify({ schemaVersion: 2, signatures, scenes, images }),
+    );
   } catch {
     // Calibration is a convenience; keep the in-memory value when storage is full.
   }
@@ -100,6 +121,7 @@ export function writeSceneQuadOverride(sceneId, quad) {
   if (!template) return;
   const store = readStore();
   store.scenes[sceneId] = normalizeQuad(quad, template.quad);
+  store.signatures[sceneId] = sceneSignature(sceneId);
   writeStore(store);
 }
 
@@ -107,7 +129,20 @@ export function clearSceneQuadOverride(sceneId) {
   const store = readStore();
   if (!(sceneId in store.scenes)) return;
   delete store.scenes[sceneId];
+  pruneSignatures(store);
   writeStore(store);
+}
+
+// Signatures only exist to validate stored corrections, so they go away with the
+// last correction that needed them.
+function pruneSignatures(store) {
+  const used = new Set(Object.keys(store.scenes));
+  Object.values(store.images).forEach((byScene) => {
+    Object.keys(byScene).forEach((sceneId) => used.add(sceneId));
+  });
+  Object.keys(store.signatures).forEach((sceneId) => {
+    if (!used.has(sceneId)) delete store.signatures[sceneId];
+  });
 }
 
 export function writeImageQuadOverride(imageId, sceneId, quad) {
@@ -116,6 +151,7 @@ export function writeImageQuadOverride(imageId, sceneId, quad) {
   const store = readStore();
   const existing = store.images[imageId] || {};
   store.images[imageId] = { ...existing, [sceneId]: normalizeQuad(quad, template.quad) };
+  store.signatures[sceneId] = sceneSignature(sceneId);
   writeStore(store);
 }
 
@@ -126,6 +162,7 @@ export function clearImageQuadOverride(imageId, sceneId) {
   delete existing[sceneId];
   if (Object.keys(existing).length) store.images[imageId] = existing;
   else delete store.images[imageId];
+  pruneSignatures(store);
   writeStore(store);
 }
 
@@ -135,5 +172,6 @@ export function clearImageQuadOverrides(imageId) {
   const store = readStore();
   if (!(imageId in store.images)) return;
   delete store.images[imageId];
+  pruneSignatures(store);
   writeStore(store);
 }

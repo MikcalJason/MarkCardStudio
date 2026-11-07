@@ -3,6 +3,8 @@ import { getFontEmbedCSS, toCanvas } from "html-to-image";
 import { jsPDF } from "jspdf";
 import { createApp, nextTick, ref } from "vue";
 import CardArtwork from "../components/preview/CardArtwork.vue";
+import { findSceneTemplate, scenePageSize } from "../config/sceneMockups.js";
+import { resolveSceneQuad } from "../storage/sceneMockupTemplates.js";
 import { renderMermaidDiagrams, renderEChartsDiagrams } from "./useContentParser.js";
 import * as echarts from "echarts";
 import { i18n } from "../i18n/index.js";
@@ -77,7 +79,9 @@ export function useCardExport({
       const bgVal = backgroundValue?.value || "linear-gradient(135deg, #69eacb 0%, #eaccf8 48%, #6654f1 100%)";
       let targetFolder = exportPath?.value?.trim() || "";
       const isTopLeft = showTopLeft?.value ?? true;
-      const isTopRight = showTopRight?.value ?? showPageNumber?.value ?? true;
+      // The top-right slot renders the page number only, so hiding page numbers
+      // has to blank it here too — otherwise preview and export disagree.
+      const isTopRight = (showTopRight?.value ?? true) && (showPageNumber?.value ?? true);
       const isBottomLeft = showBottomLeft?.value ?? true;
       const isBottomRight = showBottomRight?.value ?? true;
 
@@ -168,10 +172,16 @@ export function useCardExport({
       const pageNum = pageList.length === 1 ? activePageIndex.value + 1 : i + 1;
       exportMessage.value = t("runtime.renderingPage", { current: i + 1, total: pageList.length });
 
+      // Each page is its own file here, so a scene page keeps the larger canvas
+      // that preserves the warped card's detail. PDF and the stitched long image
+      // stay on the platform canvas, because their pages must share one size.
+      const pageCanvas = page?.gallery?.sceneBackdrop
+        ? scenePageCanvas(page, platform.width, platform.height)
+        : platform;
       const canvas = await renderPageToCanvas(
         page,
-        platform.width,
-        platform.height,
+        pageCanvas.width,
+        pageCanvas.height,
         themeClass,
         isTransparent,
         bgHex,
@@ -267,16 +277,25 @@ export function useCardExport({
     for (let i = 0; i < canvases.length; i++) {
       ctx.drawImage(canvases[i], 0, i * singleH);
     }
+    // The per-page canvases are full resolution and no longer needed; releasing
+    // them keeps a tall stitched image from doubling peak memory.
+    canvases.forEach((pageCanvas) => {
+      pageCanvas.width = 0;
+      pageCanvas.height = 0;
+    });
 
     const blob = await canvasToBlob(masterCanvas, "image/png", 1.0);
-    if (blob) {
-      const filename = `markcard-long-image-${canvases.length}pages.png`;
-      const savedPath = await saveOutputBlob(blob, filename, targetFolder, outputFolderName);
-      if (savedPath) {
-        exportMessage.value = t("runtime.longImageExported", { path: savedPath });
-      } else {
-        exportMessage.value = t("runtime.longImageComplete", { count: canvases.length });
-      }
+    if (!blob) {
+      // A null blob means the stitched canvas exceeded what this WebView can
+      // encode; staying silent left the spinner running with no file written.
+      throw new Error(t("runtime.longImageFailed"));
+    }
+    const filename = `markcard-long-image-${canvases.length}pages.png`;
+    const savedPath = await saveOutputBlob(blob, filename, targetFolder, outputFolderName);
+    if (savedPath) {
+      exportMessage.value = t("runtime.longImageExported", { path: savedPath });
+    } else {
+      exportMessage.value = t("runtime.longImageComplete", { count: canvases.length });
     }
   }
 
@@ -402,7 +421,8 @@ export function useCardExport({
           pageNumber: i + 1,
           totalPages: exportPages.length,
           showTopLeft: showTopLeft?.value ?? true,
-          showTopRight: showTopRight?.value ?? showPageNumber?.value ?? true,
+          showTopRight: showTopRight?.value ?? true,
+          showPageNumber: showPageNumber?.value ?? true,
           showBottomLeft: showBottomLeft?.value ?? true,
           showBottomRight: showBottomRight?.value ?? true,
           customFontFamily: customFontFamily?.value || "",
@@ -443,6 +463,16 @@ export function useCardExport({
  * (publish bundles). It must stay the only path from a page to an image so
  * preview, pagination and export keep matching.
  */
+function scenePageCanvas(page, width, height) {
+  const sceneId = page?.gallery?.sceneId;
+  const scene = findSceneTemplate(sceneId);
+  // The backdrop was composited through this image's own corners, so the canvas
+  // has to be sized from the same resolved quad — the shipped template quad would
+  // put the page on a different scale than the blob it is painted onto.
+  const quad = resolveSceneQuad(sceneId, page?.gallery?.imageId) || scene?.quad;
+  return scenePageSize(width, height, quad, width);
+}
+
 export async function renderPageToImage(page, options = {}) {
   const {
     width = 1080,
@@ -458,6 +488,7 @@ export async function renderPageToImage(page, options = {}) {
     totalPages = 1,
     showTopLeft = true,
     showTopRight = true,
+    showPageNumber = showTopRight,
     showBottomLeft = true,
     showBottomRight = true,
     customFontFamily = "",
@@ -465,10 +496,16 @@ export async function renderPageToImage(page, options = {}) {
   } = options;
 
   const ext = String(format).toUpperCase() === "JPG" ? "jpg" : "png";
+  // A scene page is a photo with the card warped into the calibrated quad: at the
+  // platform canvas the card loses most of its detail, so the page is rendered on
+  // the quad-derived canvas instead.
+  const target = page?.gallery?.sceneBackdrop
+    ? scenePageCanvas(page, width, height)
+    : { width, height };
   const canvas = await renderPageToCanvas(
     page,
-    width,
-    height,
+    target.width,
+    target.height,
     themeClass,
     transparent && ext !== "jpg",
     backgroundColor,
@@ -476,7 +513,7 @@ export async function renderPageToImage(page, options = {}) {
     backgroundValue,
     ext,
     showTopLeft,
-    showTopRight,
+    showTopRight && showPageNumber,
     showBottomLeft,
     showBottomRight,
     pageNumber,
@@ -533,31 +570,50 @@ function sanitizeFolderName(name) {
 // leave Image.decode() pending for SVG data URLs. WebViews also pause rAF while
 // occluded, so capture gets timer-backed shims for both; everything is restored
 // afterwards.
+// Captures can overlap (scan-to-preview, publish bundle, a second export), and
+// the patch is global. Only the first caller installs it and only the last one
+// restores, otherwise a nested call restores a stale capture and leaves the
+// whole app running on the setTimeout shim.
+let unthrottleDepth = 0;
+let unthrottleOriginals = null;
+
 async function toCanvasUnthrottled(node, options) {
-  const originalFrame = window.requestAnimationFrame;
-  const originalCancel = window.cancelAnimationFrame;
-  const originalDecode = HTMLImageElement.prototype.decode;
-  window.requestAnimationFrame = (callback) => window.setTimeout(() => callback(performance.now()), 0);
-  window.cancelAnimationFrame = (id) => window.clearTimeout(id);
-  HTMLImageElement.prototype.decode = function patchedDecode() {
-    const source = this.currentSrc || this.src || "";
-    if (/^data:image\/svg/i.test(source) || /\.svg(?:[?#]|$)/i.test(source)) {
-      return Promise.resolve();
-    }
-    return withTimeout(
-      Promise.resolve()
-        .then(() => originalDecode.call(this))
-        .catch(() => undefined),
-      4_000,
-      undefined,
-    );
-  };
+  if (unthrottleDepth === 0) {
+    unthrottleOriginals = {
+      frame: window.requestAnimationFrame,
+      cancel: window.cancelAnimationFrame,
+      decode: HTMLImageElement.prototype.decode,
+    };
+    const originalDecode = unthrottleOriginals.decode;
+    window.requestAnimationFrame = (callback) =>
+      window.setTimeout(() => callback(performance.now()), 0);
+    window.cancelAnimationFrame = (id) => window.clearTimeout(id);
+    HTMLImageElement.prototype.decode = function patchedDecode() {
+      const source = this.currentSrc || this.src || "";
+      if (/^data:image\/svg/i.test(source) || /\.svg(?:[?#]|$)/i.test(source)) {
+        return Promise.resolve();
+      }
+      return withTimeout(
+        Promise.resolve()
+          .then(() => originalDecode.call(this))
+          .catch(() => undefined),
+        4_000,
+        undefined,
+      );
+    };
+  }
+
+  unthrottleDepth += 1;
   try {
     return await toCanvas(node, options);
   } finally {
-    window.requestAnimationFrame = originalFrame;
-    window.cancelAnimationFrame = originalCancel;
-    HTMLImageElement.prototype.decode = originalDecode;
+    unthrottleDepth -= 1;
+    if (unthrottleDepth === 0 && unthrottleOriginals) {
+      window.requestAnimationFrame = unthrottleOriginals.frame;
+      window.cancelAnimationFrame = unthrottleOriginals.cancel;
+      HTMLImageElement.prototype.decode = unthrottleOriginals.decode;
+      unthrottleOriginals = null;
+    }
   }
 }
 
@@ -627,6 +683,13 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
       customFontEmbedCss,
     );
     await rasterizeEChartsForExport(posterNode);
+    // A scene page's photo is the one image large enough for WebKit to drop out
+    // of html-to-image's clone, so it never enters the clone at all: it is
+    // lifted out here and painted onto the capture canvas afterwards, under a
+    // chrome-only pass that keeps the shade, type, and stickers on top of it.
+    const scenePhoto = page?.gallery?.sceneBackdrop
+      ? await liftScenePhotoForCapture(posterNode)
+      : null;
     await inlineImagesForExport(posterNode, renderPixelRatio);
     await inlineBackgroundImagesForExport(posterNode);
     await rasterizeCoverStickersForExport(posterNode);
@@ -655,6 +718,7 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
     // Let the browser settle fonts, CSS, and GPU texture uploads (prevents first-export blank images)
     await new Promise((r) => setTimeout(r, 250));
 
+    const opaqueBackground = (!isTransparent || ext === "jpg") ? (bgHex || "#69eacb") : null;
     const captureOptions = {
       pixelRatio: renderPixelRatio,
       width: baseWidth,
@@ -664,7 +728,9 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
       // a requested 1080×1440 export.
       canvasWidth: baseWidth,
       canvasHeight: baseHeight,
-      backgroundColor: (!isTransparent || ext === "jpg") ? (bgHex || "#69eacb") : null,
+      // A scene page composes its own background: the photo is painted under the
+      // chrome capture, so that pass has to stay transparent.
+      backgroundColor: scenePhoto ? null : opaqueBackground,
       cacheBust: false,
       skipFonts: false,
       preferredFontFormat: "woff2",
@@ -686,23 +752,33 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
 
     let canvas = null;
     try {
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
-        canvas = await toCanvasUnthrottled(posterNode, captureOptions);
-        if (!page?.gallery?.src) break;
-        // WebKit has been seen to drop the photo from a clone; retry once before
-        // accepting an export that would reach the publisher as a blank card.
-        if (!galleryPhotoMissingFrom(canvas, posterNode, captureOptions.backgroundColor)) break;
-        if (attempt === 2) {
-          console.warn("Gallery photo is missing from the export capture");
-        } else {
-          await new Promise((resolve) => setTimeout(resolve, 350));
-        }
-      }
+      // With the photo lifted out there is nothing left for the blank-card retry
+      // to look for, so the chrome pass is a single capture.
+      canvas = scenePhoto
+        ? await toCanvasUnthrottled(posterNode, captureOptions)
+        : await captureGalleryPage(posterNode, captureOptions, page);
     } finally {
       echartsImages.forEach((image, index) => {
         image.style.opacity = echartsImageOpacities[index];
       });
       if (overlayLayer) overlayLayer.style.visibility = "";
+    }
+    if (scenePhoto && canvas) {
+      if (sceneChromeIsTransparent(canvas, scenePhoto)) {
+        canvas = composeScenePhotoCapture(canvas, scenePhoto);
+      } else {
+        // Something below the photo still painted opaque, so the photo would be
+        // buried under it. Put the page back the way it was and take the old
+        // single-pass capture rather than ship a blank card.
+        restoreScenePhotoForCapture(scenePhoto);
+        const image = posterNode.querySelector("img.card-gallery__image");
+        if (image) await prepareGalleryPhotoForExport(image, renderPixelRatio);
+        canvas = await captureGalleryPage(
+          posterNode,
+          { ...captureOptions, backgroundColor: opaqueBackground },
+          page,
+        );
+      }
     }
     compositeContentImages(canvas, posterNode);
     compositeCoverStickers(canvas, posterNode);
@@ -715,7 +791,11 @@ async function renderPageToCanvas(page, width, height, themeClass, isTransparent
     console.error("html-to-image render error:", err);
     exportApp.unmount();
     container.remove();
-    return null;
+    // The inner throws already carry a localized, specific reason (oversize
+    // block, unreadable image, missing remote asset). Swallowing them into null
+    // left every caller reporting only "page N failed" with no way to tell a
+    // 404 from a CORS block.
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
 
@@ -932,7 +1012,18 @@ function convertImageElementToDataUrl(img) {
 }
 
 async function prepareGalleryPhotoForExport(img, renderPixelRatio) {
-  const normalized = rasterizeContentImage(img, renderPixelRatio, { preferJpeg: true });
+  // The scene composite is already a high-quality JPEG and this is the last
+  // generation before the page leaves the app, so keep it near lossless.
+  // Only a `cover` photo is height-driven and needs cover resolution; a `contain`
+  // photo letterboxes, so width-based sizing already supplies what is displayed.
+  // Feeding cover resolution to a contain photo just bloats its JPEG toward the
+  // size WebKit drops from the clone, with no clarity gain.
+  const isContain = Boolean(img.closest(".card-gallery--contain"));
+  const normalized = rasterizeContentImage(img, renderPixelRatio, {
+    preferJpeg: true,
+    quality: 0.97,
+    coverFit: !isContain,
+  });
   if (normalized) {
     img.srcset = "";
     img.src = normalized;
@@ -1025,7 +1116,7 @@ function replaceFailedContentImage(image) {
   return true;
 }
 
-function rasterizeContentImage(img, renderPixelRatio, { preferJpeg = false } = {}) {
+function rasterizeContentImage(img, renderPixelRatio, { preferJpeg = false, quality = 0.95, coverFit = false } = {}) {
   try {
     const naturalWidth = img.naturalWidth || 0;
     const naturalHeight = img.naturalHeight || 0;
@@ -1033,8 +1124,15 @@ function rasterizeContentImage(img, renderPixelRatio, { preferJpeg = false } = {
 
     const rect = img.getBoundingClientRect();
     const targetScale = Math.max(1, Number(renderPixelRatio) || 1);
-    const requestedWidth = rect.width > 0
-      ? Math.ceil(rect.width * targetScale)
+    // A cover-cropped photo is scaled by max(rect.w/nat.w, rect.h/nat.h), so when
+    // its aspect differs from the card's the crop is driven by height, not width.
+    // Sizing the raster from width alone would hand html-to-image a low-res image
+    // that it then upscales, softening the embedded photo. Match the cover scale.
+    const coverWidth = coverFit && rect.height > 0
+      ? Math.max(rect.width, rect.height * (naturalWidth / naturalHeight))
+      : rect.width;
+    const requestedWidth = coverWidth > 0
+      ? Math.ceil(coverWidth * targetScale)
       : naturalWidth;
     const scale = Math.min(1, 4096 / naturalWidth, 4096 / naturalHeight, requestedWidth / naturalWidth);
     const width = Math.max(1, Math.round(naturalWidth * scale));
@@ -1045,6 +1143,12 @@ function rasterizeContentImage(img, renderPixelRatio, { preferJpeg = false } = {
     canvas.height = height;
     const context = canvas.getContext("2d");
     if (!context) return null;
+    // Downsampling a photo from native size to the card box uses the browser's
+    // default "low" smoothing, which aliases fine detail and thins CJK strokes.
+    // "high" applies a box/area filter that keeps the embedded photo legible,
+    // which is the whole point of a content-first gallery card.
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
     context.drawImage(img, 0, 0, width, height);
 
     const sourceType = img.src.match(/^data:([^;,]+)/i)?.[1]?.toLowerCase() || "";
@@ -1055,7 +1159,7 @@ function rasterizeContentImage(img, renderPixelRatio, { preferJpeg = false } = {
     const opaque = preferJpeg && isOpaqueImage(img);
     const outputType =
       sourceType === "image/jpeg" || (preferJpeg && opaque) ? "image/jpeg" : "image/png";
-    return canvas.toDataURL(outputType, outputType === "image/jpeg" ? 0.95 : undefined);
+    return canvas.toDataURL(outputType, outputType === "image/jpeg" ? quality : undefined);
   } catch (error) {
     console.warn("Failed to normalize local image for export", error);
     return null;
@@ -1220,6 +1324,11 @@ function compositeContentImages(canvas, root) {
   const rootRect = root.getBoundingClientRect();
   if (!context || rootRect.width <= 0 || rootRect.height <= 0) return;
 
+  // Same reason as the normalization step: default "low" smoothing aliases and
+  // thins detail when a content photo is downscaled into the final canvas.
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+
   const scaleX = canvas.width / rootRect.width;
   const scaleY = canvas.height / rootRect.height;
   for (const image of root.querySelectorAll("img.card-image, img.card-inline-image")) {
@@ -1241,6 +1350,250 @@ function compositeContentImages(canvas, root) {
     context.drawImage(image, x, y, width, height);
     context.restore();
   }
+}
+
+/// Takes the scene photo out of the export DOM and records the boxes it has to
+/// be painted back into. Scene pages carry a multi-megapixel JPEG as their card,
+/// and WebKit silently drops images of that size from html-to-image's clone —
+/// the page then exported as the frame's flat matte. Keeping the photo out of
+/// the clone removes that failure mode entirely, and painting it ourselves also
+/// skips a pointless JPEG generation.
+async function liftScenePhotoForCapture(root) {
+  const image = root.querySelector("img.card-gallery__image");
+  const figure = image?.closest(".card-gallery");
+  if (!image || !figure) return null;
+  if (!(await waitForImageDecode(image)) || image.naturalWidth <= 0) {
+    throw new Error(t("runtime.binaryFailed"));
+  }
+
+  const rootRect = root.getBoundingClientRect();
+  const figureRect = figure.getBoundingClientRect();
+  const imageRect = image.getBoundingClientRect();
+  if (rootRect.width <= 0 || rootRect.height <= 0) return null;
+  if (figureRect.width <= 0 || figureRect.height <= 0) return null;
+
+  // The pixels are taken while the element is still in the document and freshly
+  // decoded. Drawing a detached image later is what a scene page cannot risk: a
+  // WebView is free to drop the bitmap of an element that left the tree, and a
+  // revoked blob would then paint nothing at all.
+  const photo = rasterizeScenePhoto(image);
+  const imageStyle = getComputedStyle(image);
+  const figureStyle = getComputedStyle(figure);
+  const frameStyle = getComputedStyle(root);
+  const layer = {
+    photo,
+    image,
+    figure,
+    rootRect,
+    figureRect,
+    imageRect,
+    fit: imageStyle.objectFit || "cover",
+    radius: Number.parseFloat(figureStyle.borderTopLeftRadius) || 0,
+    background: frameStyle.backgroundColor || "",
+    cleared: [],
+  };
+
+  // Every layer under the photo is the card's own matte. Left alone it would be
+  // captured on top of the photo instead of under it, so the whole ancestor chain
+  // up to the frame is cleared and composeScenePhotoCapture paints the colour
+  // back before the chrome lands on it.
+  for (let node = figure; node; node = node.parentElement) {
+    layer.cleared.push({
+      node,
+      background: node.style.background,
+      backgroundImage: node.style.backgroundImage,
+      boxShadow: node.style.boxShadow,
+    });
+    node.style.background = "transparent";
+    node.style.backgroundImage = "none";
+    node.style.boxShadow = "none";
+    if (node === root) break;
+  }
+
+  image.remove();
+  return layer;
+}
+
+/// Undoes liftScenePhotoForCapture so a page can still be captured with its photo
+/// inside the cloned markup.
+function restoreScenePhotoForCapture(layer) {
+  for (const entry of layer.cleared || []) {
+    entry.node.style.background = entry.background;
+    entry.node.style.backgroundImage = entry.backgroundImage;
+    entry.node.style.boxShadow = entry.boxShadow;
+  }
+  layer.cleared = [];
+  if (!layer.image.isConnected) {
+    layer.figure.insertBefore(layer.image, layer.figure.firstChild);
+  }
+}
+
+/// A bitmap of the scene composite, taken from the live element. Throws when the
+/// WebView hands back an empty one, because a page assembled from it would reach
+/// the publisher as a flat card with no photo in it.
+function rasterizeScenePhoto(image) {
+  const width = image.naturalWidth || 0;
+  const height = image.naturalHeight || 0;
+  if (width <= 0 || height <= 0) throw new Error(t("runtime.binaryFailed"));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error(t("runtime.binaryFailed"));
+  context.drawImage(image, 0, 0, width, height);
+  if (isFlatRaster(canvas)) throw new Error(t("runtime.binaryFailed"));
+  return canvas;
+}
+
+/// A 10×10 downsample of one flat colour means nothing was painted into the
+/// raster; no shipped scene composite is a single colour.
+function isFlatRaster(canvas) {
+  const probe = document.createElement("canvas");
+  probe.width = 10;
+  probe.height = 10;
+  const context = probe.getContext("2d", { willReadFrequently: true });
+  if (!context) return false;
+  try {
+    context.drawImage(canvas, 0, 0, probe.width, probe.height);
+    const data = context.getImageData(0, 0, probe.width, probe.height).data;
+    const red = data[0];
+    const green = data[1];
+    const blue = data[2];
+    const tolerance = 6;
+    for (let index = 0; index < data.length; index += 4) {
+      if (
+        Math.abs(data[index] - red) > tolerance
+        || Math.abs(data[index + 1] - green) > tolerance
+        || Math.abs(data[index + 2] - blue) > tolerance
+      ) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// True when the chrome capture left the photo's box see-through, which is what
+/// lets the lifted photo be painted underneath it.
+function sceneChromeIsTransparent(chrome, layer) {
+  const context = chrome.getContext("2d", { willReadFrequently: true });
+  if (!context) return true;
+  const scaleX = chrome.width / layer.rootRect.width;
+  const scaleY = chrome.height / layer.rootRect.height;
+  const left = (layer.figureRect.left - layer.rootRect.left) * scaleX;
+  const top = (layer.figureRect.top - layer.rootRect.top) * scaleY;
+  const width = layer.figureRect.width * scaleX;
+  const height = layer.figureRect.height * scaleY;
+  const samples = 5;
+  let opaque = 0;
+  let total = 0;
+  try {
+    for (let row = 0; row < samples; row += 1) {
+      for (let column = 0; column < samples; column += 1) {
+        const x = Math.min(chrome.width - 1, Math.round(left + ((column + 0.5) * width) / samples));
+        const y = Math.min(chrome.height - 1, Math.round(top + ((row + 0.5) * height) / samples));
+        if (x < 0 || y < 0) continue;
+        total += 1;
+        if (context.getImageData(x, y, 1, 1).data[3] > 250) opaque += 1;
+      }
+    }
+  } catch {
+    // A tainted canvas cannot be sampled; the composition still works.
+    return true;
+  }
+  // Title and caption glyphs are opaque but only cover a small part of the card.
+  return total === 0 || opaque / total < 0.6;
+}
+
+/// Captures a page whose gallery photo has to travel inside the clone, retrying
+/// once when WebKit drops it on the way.
+async function captureGalleryPage(root, captureOptions, page) {
+  let canvas = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    canvas = await toCanvasUnthrottled(root, captureOptions);
+    if (!page?.gallery?.src) break;
+    // WebKit has been seen to drop the photo from a clone; retry once before
+    // accepting an export that would reach the publisher as a blank card.
+    if (!galleryPhotoMissingFrom(canvas, root, captureOptions.backgroundColor)) break;
+    if (attempt === 2) {
+      console.warn("Gallery photo is missing from the export capture");
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+  }
+  return canvas;
+}
+
+/// Paints the lifted photo, then lays the chrome-only capture over it: the shade
+/// gradient, type, and stickers still blend against the photo because they were
+/// captured with the same transparency they render with in the preview.
+function composeScenePhotoCapture(chrome, layer) {
+  const canvas = document.createElement("canvas");
+  canvas.width = chrome.width;
+  canvas.height = chrome.height;
+  const context = canvas.getContext("2d");
+  if (!context) return chrome;
+
+  const scaleX = canvas.width / layer.rootRect.width;
+  const scaleY = canvas.height / layer.rootRect.height;
+  const clipX = (layer.figureRect.left - layer.rootRect.left) * scaleX;
+  const clipY = (layer.figureRect.top - layer.rootRect.top) * scaleY;
+  const clipWidth = layer.figureRect.width * scaleX;
+  const clipHeight = layer.figureRect.height * scaleY;
+  const boxX = (layer.imageRect.left - layer.rootRect.left) * scaleX;
+  const boxY = (layer.imageRect.top - layer.rootRect.top) * scaleY;
+  const boxWidth = layer.imageRect.width * scaleX;
+  const boxHeight = layer.imageRect.height * scaleY;
+
+  // A `contain` letterbox and a framed gallery's rounded corners show the card's
+  // matte, which the chrome capture no longer carries.
+  const matte = /^rgba\(0, 0, 0, 0\)$/.test(layer.background) ? "#0b1220" : layer.background;
+  context.fillStyle = matte || "#0b1220";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.save();
+  roundedRectPath(
+    context,
+    clipX,
+    clipY,
+    clipWidth,
+    clipHeight,
+    Math.min(layer.radius * Math.min(scaleX, scaleY), clipWidth / 2, clipHeight / 2),
+  );
+  context.clip();
+  drawImageObjectFit(context, layer.photo, boxX, boxY, boxWidth, boxHeight, layer.fit);
+  context.restore();
+
+  context.drawImage(chrome, 0, 0);
+  return canvas;
+}
+
+/// Mirrors `object-fit` for the one case the export cannot leave to the browser.
+/// The source is the rasterised scene photo, so its own size stands in for the
+/// decoded image dimensions.
+function drawImageObjectFit(context, image, x, y, width, height, fit) {
+  const naturalWidth = image.naturalWidth || image.width || 0;
+  const naturalHeight = image.naturalHeight || image.height || 0;
+  if (naturalWidth <= 0 || naturalHeight <= 0 || width <= 0 || height <= 0) return;
+  if (fit === "fill") {
+    context.drawImage(image, x, y, width, height);
+    return;
+  }
+  const contain = fit === "contain" || fit === "scale-down";
+  const scale = contain
+    ? Math.min(width / naturalWidth, height / naturalHeight)
+    : Math.max(width / naturalWidth, height / naturalHeight);
+  const drawWidth = naturalWidth * scale;
+  const drawHeight = naturalHeight * scale;
+  context.drawImage(
+    image,
+    x + (width - drawWidth) / 2,
+    y + (height - drawHeight) / 2,
+    drawWidth,
+    drawHeight,
+  );
 }
 
 /// WebKit's foreignObject rendering drops gallery photos: they are absolutely

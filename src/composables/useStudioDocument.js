@@ -794,7 +794,6 @@ export function useStudioDocument() {
           kicker: globalMeta.value.kicker,
           date: globalMeta.value.date || getTodayDateString(),
           quote: globalMeta.value.quote,
-          stickers: selectedCoverStickers.value,
           fallbackTitle: t("workspace.untitled"),
           emptyLabel: t("gallery.emptyCardTitle"),
           emptyDescription: t("gallery.emptyCardDesc"),
@@ -1385,7 +1384,7 @@ function buildGalleryPages(work, options = {}) {
         imageUrl: "",
         cover: true,
         isOverflow: false,
-        stickers: options.stickers || [],
+        stickers: [],
         date: options.date || getTodayDateString(),
         quote: options.quote || t("runtime.defaultQuote"),
         gallery: {
@@ -1420,7 +1419,7 @@ function buildGalleryPages(work, options = {}) {
       imageUrl: image.src || "",
       cover: isLegacyCover,
       isOverflow: false,
-      stickers: isLegacyCover ? options.stickers || [] : [],
+      stickers: [],
       date: options.date || getTodayDateString(),
       quote: options.quote || t("runtime.defaultQuote"),
       gallery: {
@@ -1432,6 +1431,9 @@ function buildGalleryPages(work, options = {}) {
         total: images.length,
         missing: !gallerySrc,
         sceneBackdrop: Boolean(sceneBackdrop),
+        // The exporter sizes a scene page from this image's own corners, so the
+        // page has to say which image it came from.
+        imageId: image.id,
         overlay: resolveOverlay(image.overlay),
         tint: image.tint || null,
         ...layout,

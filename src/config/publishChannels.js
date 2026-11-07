@@ -36,7 +36,9 @@ export const PUBLISH_CHANNELS = [
     },
     media: { format: "JPG", maxBytes: 32 * 1024 * 1024, minSide: 720 },
     capabilities: { draft: false, publish: false, schedule: false, tags: true, cover: true },
-    externalUrl: "https://creator.xiaohongshu.com/publish/publish",
+    externalUrl: "https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=image",
+    // The fill extension only runs in Chrome, so this page must open there to be useful.
+    openInChrome: true,
   },
   {
     id: "local-bundle",

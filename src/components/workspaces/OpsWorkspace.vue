@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import AppIcon from "../AppIcon.vue";
 import { PUBLISH_CHANNELS } from "../../config/publishChannels.js";
@@ -103,6 +103,10 @@ const preview = computed(() => (importDraft.value.trim() ? parseImportText(impor
 const previewError = computed(() => {
   const result = preview.value;
   return result?.error ? t(`ops.import.errors.${result.error}`) : "";
+});
+const skipDetailsOpen = ref(false);
+watch(importDraft, () => {
+  skipDetailsOpen.value = false;
 });
 
 function openImport() {
@@ -652,6 +656,29 @@ function deleteReview(review) {
                     · {{ t("ops.import.previewSkipped", { count: preview.skipped }) }}
                   </span>
                 </p>
+                <div v-if="preview.skipped && preview.skippedRows?.length" class="mt-1">
+                  <button
+                    type="button"
+                    class="text-[10px] font-semibold text-blue-600 transition-colors hover:text-blue-700 hover:underline dark:text-blue-300 dark:hover:text-blue-200"
+                    :aria-expanded="skipDetailsOpen"
+                    @click="skipDetailsOpen = !skipDetailsOpen"
+                  >
+                    {{ skipDetailsOpen ? t("ops.import.skipDetailsHide") : t("ops.import.skipDetailsShow") }}
+                  </button>
+                  <ul
+                    v-if="skipDetailsOpen"
+                    class="mt-1 max-h-28 space-y-0.5 overflow-y-auto rounded-lg bg-white/70 px-2 py-1.5 text-[10px] leading-4 text-slate-500 dark:bg-slate-900/50 dark:text-slate-400"
+                  >
+                    <li v-for="(item, index) in preview.skippedRows" :key="`${item.number}-${index}`">
+                      {{ item.reason === "date"
+                        ? t("ops.import.skipReasonDate", { number: item.number, value: item.value })
+                        : t("ops.import.skipReasonEmpty", { number: item.number }) }}
+                    </li>
+                    <li v-if="preview.skipped > preview.skippedRows.length" class="text-slate-400 dark:text-slate-500">
+                      {{ t("ops.import.skipDetailsTruncated", { count: preview.skipped - preview.skippedRows.length }) }}
+                    </li>
+                  </ul>
+                </div>
                 <div class="mt-1.5 flex flex-wrap gap-1">
                   <span
                     v-for="(label, field) in preview.mappedLabels"

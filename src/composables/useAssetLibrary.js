@@ -21,6 +21,8 @@ import {
 const INDEX_SCHEMA_VERSION = 1;
 const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
 const ROOTS_KEY = "markcard_asset_roots_v1";
+const RECENT_ROOTS_KEY = "markcard_asset_recent_roots_v1";
+const RECENT_ROOTS_LIMIT = 8;
 const SORT_KEY = "markcard_asset_sort_v1";
 const SORT_OPTIONS = [
   "newest",
@@ -33,11 +35,16 @@ const SORT_OPTIONS = [
   "usage-asc",
 ];
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+// Files are read over IPC, hashed, thumbnailed and written back per image, so a
+// vault scan is latency- and CPU-bound per file. A small worker pool overlaps
+// those round-trips; the cap keeps only a handful of full data URLs in memory.
+const SCAN_CONCURRENCY = 4;
 const DEFAULT_FILTERS = {
   kind: "all",
   source: "all",
   usage: "all",
   ai: "all",
+  tag: "",
   folder: "",
   trash: false,
 };
@@ -115,6 +122,20 @@ function folderDisplayName(path) {
   return segments[segments.length - 1] || String(path || "");
 }
 
+// Scan roots are recorded only in `roots`, so a root can be rebuilt from an
+// entry: the root path is the absolute path minus its root-relative part.
+// `relativePath` is always "/"-joined while `absolutePath` keeps native
+// separators, so compare normalized but slice the original (same length).
+function rootPathFromFolderEntry(entry) {
+  const absolute = String(entry.absolutePath || "");
+  if (!absolute) return "";
+  const relative = String(entry.relativePath || "").replace(/\\/g, "/");
+  if (relative && absolute.replace(/\\/g, "/").endsWith(`/${relative}`)) {
+    return absolute.slice(0, absolute.length - relative.length - 1).replace(/[\\/]+$/, "");
+  }
+  return absolute.replace(/[\\/][^\\/]+$/, "");
+}
+
 // Imported files remember their original absolute path, so the library can
 // show a project tree even before any folder is mounted for scanning.
 function sourceDirOf(asset) {
@@ -189,9 +210,9 @@ function buildSourceTree(assets) {
   return nodes.get(commonDirPrefix(dirs)) || rootNode;
 }
 
-function readStoredRoots() {
+function readStoredRoots(key = ROOTS_KEY) {
   try {
-    const parsed = JSON.parse(localStorage.getItem(ROOTS_KEY) || "[]");
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
     return Array.isArray(parsed) ? parsed.map(normalizeRoot).filter(Boolean) : [];
   } catch {
     return [];
@@ -207,9 +228,9 @@ function readStoredSort() {
   }
 }
 
-function writeStoredRoots(list) {
+function writeStoredRoots(list, key = ROOTS_KEY) {
   try {
-    localStorage.setItem(ROOTS_KEY, JSON.stringify(list));
+    localStorage.setItem(key, JSON.stringify(list));
   } catch {
     // Only the mounted-folder list is lost when storage is unavailable.
   }
@@ -218,6 +239,15 @@ function writeStoredRoots(list) {
 function everyFolderMissing(asset) {
   const paths = folderAssetPaths(asset);
   return paths.length > 0 && paths.every((entry) => entry.missingSince);
+}
+
+// An asset only belongs to one scan folder when none of its paths sit under
+// another root, so detaching never archives shared or hand-picked imports.
+function assetsExclusiveToRoot(assets, rootId) {
+  return assets.filter((asset) => {
+    const entries = folderAssetPaths(asset);
+    return entries.length > 0 && entries.every((entry) => entry.rootId === rootId);
+  });
 }
 
 function buildRootTree(root, assets) {
@@ -351,6 +381,7 @@ function serializableAsset(asset, platform) {
 export function useAssetLibrary() {
   const assets = ref([]);
   const roots = ref([]);
+  const recentRoots = ref([]);
   const scanProgress = ref({ active: false, label: "", current: 0, total: 0 });
   const query = ref("");
   const filters = reactive({ ...DEFAULT_FILTERS });
@@ -374,6 +405,9 @@ export function useAssetLibrary() {
   // one into the reactive list would recompute filters, stats, and the folder
   // tree thousands of times while a vault imports.
   let scanBuffer = null;
+  // In-flight creations keyed by asset id, so concurrent bulk imports of the
+  // same bytes share one insert instead of racing past the dedupe check.
+  const importInFlight = new Map();
 
   const isDesktop = computed(() => isTauri());
 
@@ -392,6 +426,7 @@ export function useAssetLibrary() {
       if (filters.usage === "unused" && asset.usage?.length) return false;
       if (filters.ai === "ai" && !asset.ai?.generated) return false;
       if (filters.ai === "non-ai" && asset.ai?.generated) return false;
+      if (filters.tag && !(asset.tags || []).includes(filters.tag)) return false;
       if (smart === "unfiled" && (folderAssetPaths(asset).length || sourceDirOf(asset) !== null)) return false;
       if (smart === "missing" && !everyFolderMissing(asset)) return false;
       if (!smart && folder?.rootId === "source") {
@@ -461,6 +496,14 @@ export function useAssetLibrary() {
 
   const hasAssets = computed(() => assets.value.length > 0);
 
+  const allTags = computed(() => {
+    const tags = new Set();
+    for (const asset of activeAssets.value) {
+      for (const tag of asset.tags || []) tags.add(tag);
+    }
+    return [...tags].sort((left, right) => left.localeCompare(right, "zh-CN"));
+  });
+
   function findAsset(assetId) {
     if (scanBuffer) {
       const buffered = scanBuffer.find((asset) => asset.assetId === assetId);
@@ -495,10 +538,15 @@ export function useAssetLibrary() {
             roots.value = (Array.isArray(index?.roots) ? index.roots : [])
               .map(normalizeRoot)
               .filter(Boolean);
+            recentRoots.value = (Array.isArray(index?.recentRoots) ? index.recentRoots : [])
+              .map(normalizeRoot)
+              .filter(Boolean)
+              .slice(0, RECENT_ROOTS_LIMIT);
             return index?.assets || [];
           })
         : await listBrowserAssets().then((records) => {
             roots.value = readStoredRoots();
+            recentRoots.value = readStoredRoots(RECENT_ROOTS_KEY).slice(0, RECENT_ROOTS_LIMIT);
             return records;
           });
       const normalized = records.map(normalizeAsset).filter(Boolean);
@@ -513,6 +561,12 @@ export function useAssetLibrary() {
       for (const asset of assets.value) {
         if (asset.thumbDataUrl) rememberThumb(asset.assetId, asset.thumbDataUrl);
         if (asset.dataUrl) rememberSource(asset.assetId, asset.dataUrl);
+      }
+      const recovered = recoverRootsFromEntries();
+      if (recovered.length) {
+        roots.value = [...roots.value, ...recovered];
+        for (const root of recovered) rememberRecentRoot(root);
+        await flushPersist();
       }
       initialized.value = true;
     } catch (err) {
@@ -541,12 +595,14 @@ export function useAssetLibrary() {
             index: {
               schemaVersion: INDEX_SCHEMA_VERSION,
               roots: roots.value,
+              recentRoots: recentRoots.value,
               assets: snapshot,
             },
           });
         } else {
           await saveBrowserAssets(snapshot);
           writeStoredRoots(roots.value);
+          writeStoredRoots(recentRoots.value, RECENT_ROOTS_KEY);
         }
         error.value = "";
       })
@@ -674,6 +730,59 @@ export function useAssetLibrary() {
       return { asset: findAsset(assetId), duplicate: true };
     }
 
+    // Concurrent bulk imports can hash two identical files before either has
+    // been committed, so the first in-flight creation is shared: later callers
+    // await it and land on the dedupe path instead of double-inserting. The
+    // resume-to-set block below has no await, so the winner always registers
+    // before a loser reads the map.
+    const pending = importInFlight.get(assetId);
+    if (pending) {
+      try {
+        await pending;
+      } catch {
+        // The in-flight attempt failed; fall through and create it ourselves.
+      }
+      const after = findAsset(assetId);
+      if (after) {
+        if (folder) attachFolder(after.assetId, folder);
+        return { asset: findAsset(assetId), duplicate: true };
+      }
+    }
+
+    const task = createAssetFromDataUrl({
+      dataUrl,
+      fileName,
+      mediaType,
+      sourceKind,
+      sourcePath,
+      derivedFrom,
+      folder,
+      assetId,
+      bytes,
+      skipPersist,
+      skipSourceCache,
+    });
+    importInFlight.set(assetId, task);
+    try {
+      return await task;
+    } finally {
+      if (importInFlight.get(assetId) === task) importInFlight.delete(assetId);
+    }
+  }
+
+  async function createAssetFromDataUrl({
+    dataUrl,
+    fileName,
+    mediaType,
+    sourceKind,
+    sourcePath,
+    derivedFrom,
+    folder,
+    assetId,
+    bytes,
+    skipPersist,
+    skipSourceCache,
+  }) {
     const [dimensions, thumbnail] = await Promise.all([
       readImageDimensions(dataUrl).catch(() => ({ width: 0, height: 0 })),
       createImageThumbnail(dataUrl).catch(() => ""),
@@ -753,14 +862,27 @@ export function useAssetLibrary() {
     );
     // Seen-but-stale bookkeeping happens once per scan, so a rescan of an
     // unchanged folder must not rewrite thousands of assets one by one.
-    if (exists) return asset;
+    // A file the scan sees again is not gone any more, so an archive left over
+    // from a previous detach is lifted while its paths are re-attached.
+    if (exists) {
+      if (!asset.deletedAt) return asset;
+      if (scanBuffer) {
+        asset.deletedAt = null;
+        asset.updatedAt = nowIso();
+        return asset;
+      }
+      return updateAsset(assetId, { deletedAt: null });
+    }
     const folders = [...folderAssetPaths(asset), { ...entry, missingSince: null }];
-    if (scanBuffer?.includes(asset)) {
+    // During a scan, mutate in place: rebuilding the whole array per asset is
+    // what made re-importing a previously detached vault cost O(n²).
+    if (scanBuffer) {
       asset.folders = folders;
+      asset.deletedAt = null;
       asset.updatedAt = nowIso();
       return asset;
     }
-    return updateAsset(assetId, { folders });
+    return updateAsset(assetId, { folders, deletedAt: null });
   }
 
   // One array rebuild for the whole folder refresh, so a rescan of a large vault
@@ -794,6 +916,89 @@ export function useAssetLibrary() {
       count += folderAssetPaths(asset).filter((entry) => entry.rootId === rootId && entry.missingSince).length;
     }
     return count;
+  }
+
+  // Folder entries outliving their root record hides the whole mounted-folder
+  // rail, including rescan and detach, with no way back, so rebuild the missing
+  // roots from the entries. Losing them usually means the same folder was
+  // mounted again, so entries resolving to one path fold into the most recently
+  // scanned root instead of becoming duplicate sections.
+  function recoverRootsFromEntries() {
+    const known = new Set(roots.value.map((root) => root.rootId));
+    const groups = new Map();
+    for (const asset of assets.value) {
+      for (const entry of folderAssetPaths(asset)) {
+        if (known.has(entry.rootId)) continue;
+        const path = rootPathFromFolderEntry(entry);
+        if (!path) continue;
+        const group = groups.get(entry.rootId) || { path, pathCount: 0, paths: new Map(), lastScanAt: "" };
+        const count = (group.paths.get(path) || 0) + 1;
+        group.paths.set(path, count);
+        if (count > group.pathCount) {
+          group.path = path;
+          group.pathCount = count;
+        }
+        if (String(entry.lastSeenAt) > group.lastScanAt) group.lastScanAt = String(entry.lastSeenAt);
+        groups.set(entry.rootId, group);
+      }
+    }
+
+    const mergeTarget = new Map();
+    const winners = new Map();
+    for (const [rootId, group] of groups) {
+      const current = winners.get(group.path);
+      if (current && current.lastScanAt >= group.lastScanAt) {
+        mergeTarget.set(rootId, current.rootId);
+      } else {
+        if (current) mergeTarget.set(current.rootId, rootId);
+        winners.set(group.path, { rootId, path: group.path, lastScanAt: group.lastScanAt });
+      }
+    }
+
+    // Chains form when a middle root wins then loses, so resolve to the end.
+    const resolveRootId = (rootId) => {
+      let target = rootId;
+      while (mergeTarget.has(target)) target = mergeTarget.get(target);
+      return target;
+    };
+
+    if (mergeTarget.size) {
+      assets.value = assets.value.map((asset) => {
+        const entries = folderAssetPaths(asset);
+        if (!entries.some((entry) => mergeTarget.has(entry.rootId))) return asset;
+        const merged = new Map();
+        for (const entry of entries) {
+          const rootId = resolveRootId(entry.rootId);
+          const next = rootId === entry.rootId ? entry : { ...entry, rootId };
+          const key = `${rootId}::${String(entry.relativePath).toLowerCase()}`;
+          const previous = merged.get(key);
+          if (previous && String(previous.lastSeenAt) >= String(next.lastSeenAt)) continue;
+          merged.set(key, next);
+        }
+        return { ...asset, folders: [...merged.values()], updatedAt: nowIso() };
+      });
+    }
+
+    const counts = new Map();
+    for (const asset of assets.value) {
+      for (const entry of folderAssetPaths(asset)) {
+        if (known.has(entry.rootId)) continue;
+        counts.set(entry.rootId, (counts.get(entry.rootId) || 0) + 1);
+      }
+    }
+
+    return [...winners.values()]
+      .map(({ rootId, path, lastScanAt }) =>
+        normalizeRoot({
+          rootId,
+          path,
+          label: folderDisplayName(path),
+          lastScanAt,
+          imageCount: counts.get(rootId) || 0,
+          missingCount: missingUnderRoot(rootId),
+        }),
+      )
+      .filter(Boolean);
   }
 
   async function runFolderScan(rootPath, existingRoot = null) {
@@ -830,49 +1035,67 @@ export function useAssetLibrary() {
       scanProgress.value = { active: true, label: root.label, current: 0, total: images.length };
       scanBuffer = [];
 
-      for (let index = 0; index < images.length; index += 1) {
-        const image = images[index];
-        try {
-          const resolved = await invoke("resolve_local_image", {
-            path: image.absolutePath,
-            basePath: null,
-          });
-          if (!resolved?.dataUrl) {
-            failed += 1;
-          } else {
-            const result = await importFromDataUrl({
-              dataUrl: resolved.dataUrl,
-              fileName: image.fileName || resolved.fileName || "image",
-              mediaType: image.mediaType || resolved.mediaType || "",
-              sourceKind: "import",
-              sourcePath: image.absolutePath,
-              folder: {
-                rootId: root.rootId,
-                relativePath: image.relativePath,
-                absolutePath: image.absolutePath,
-                lastSeenAt: scanAt,
-              },
-              skipPersist: true,
-              skipSourceCache: true,
+      const total = images.length;
+      const concurrency = Math.max(1, Math.min(SCAN_CONCURRENCY, total));
+      let cursor = 0;
+      let processed = 0;
+      let lastProgressAt = 0;
+
+      // Progress is a reactive object rebuilt per file; throttle it so a large
+      // vault does not churn filters, stats, and the folder tree on every image.
+      const publishProgress = (force = false) => {
+        const now = Date.now();
+        if (!force && now - lastProgressAt < 120) return;
+        lastProgressAt = now;
+        scanProgress.value = { active: true, label: root.label, current: processed, total };
+      };
+
+      const scanWorker = async () => {
+        while (cursor < total) {
+          const index = cursor;
+          cursor += 1;
+          const image = images[index];
+          try {
+            const resolved = await invoke("resolve_local_image", {
+              path: image.absolutePath,
+              basePath: null,
             });
-            if (result.duplicate) duplicates += 1;
-            else if (result.asset) added += 1;
-            else failed += 1;
+            if (!resolved?.dataUrl) {
+              failed += 1;
+            } else {
+              const result = await importFromDataUrl({
+                dataUrl: resolved.dataUrl,
+                fileName: image.fileName || resolved.fileName || "image",
+                mediaType: image.mediaType || resolved.mediaType || "",
+                sourceKind: "import",
+                sourcePath: image.absolutePath,
+                folder: {
+                  rootId: root.rootId,
+                  relativePath: image.relativePath,
+                  absolutePath: image.absolutePath,
+                  lastSeenAt: scanAt,
+                },
+                skipPersist: true,
+                skipSourceCache: true,
+              });
+              if (result.duplicate) duplicates += 1;
+              else if (result.asset) added += 1;
+              else failed += 1;
+            }
+          } catch {
+            failed += 1;
           }
-        } catch {
-          failed += 1;
+          processed += 1;
+          publishProgress();
+          if (processed % 200 === 0) {
+            commitScanBuffer();
+            await flushPersist();
+          }
         }
-        scanProgress.value = {
-          active: true,
-          label: root.label,
-          current: index + 1,
-          total: images.length,
-        };
-        if ((index + 1) % 200 === 0) {
-          commitScanBuffer();
-          await flushPersist();
-        }
-      }
+      };
+
+      await Promise.all(Array.from({ length: concurrency }, scanWorker));
+      publishProgress(true);
 
       // Anything previously scanned under this root that the walk no longer sees
       // is marked missing, never deleted: the user's folder stays authoritative.
@@ -884,6 +1107,7 @@ export function useAssetLibrary() {
       root.missingCount = missingUnderRoot(root.rootId);
       root.lastScanAt = scanAt;
       roots.value = [root, ...roots.value.filter((item) => item.rootId !== root.rootId)];
+      rememberRecentRoot(root);
       await flushPersist();
       lastImport.value = { added, duplicates, failed };
       importMessage.value = t("assets.scanResult", {
@@ -968,16 +1192,73 @@ export function useAssetLibrary() {
     }),
   );
 
-  function detachRoot(rootId) {
+  // A detached scan folder would otherwise only come back through the native
+  // picker, so scanned roots stay listed for a one-click re-import.
+  function rememberRecentRoot(root) {
+    const entry = normalizeRoot(root);
+    if (!entry?.path) return;
+    const rest = recentRoots.value.filter(
+      (item) => item.path !== entry.path && item.rootId !== entry.rootId,
+    );
+    recentRoots.value = [entry, ...rest].slice(0, RECENT_ROOTS_LIMIT);
+  }
+
+  // What the detach dialog has to promise up front: how many assets belong to
+  // this folder alone, and how many of those a document still references.
+  function assetsUnderRoot(rootId) {
+    const exclusive = assetsExclusiveToRoot(
+      assets.value.filter((asset) => !asset.deletedAt),
+      rootId,
+    );
+    return {
+      total: exclusive.length,
+      inUse: exclusive.filter((asset) => asset.usage?.length).length,
+    };
+  }
+
+  async function remountRoot(rootId) {
+    const remembered = recentRoots.value.find((root) => root.rootId === rootId);
+    if (!remembered?.path) return null;
+    return runFolderScan(remembered.path, remembered);
+  }
+
+  function detachRoot(rootId, { archive = false } = {}) {
+    const detached = roots.value.find((root) => root.rootId === rootId) || null;
     roots.value = roots.value.filter((root) => root.rootId !== rootId);
-    for (const asset of assets.value) {
-      const entries = folderAssetPaths(asset);
-      const kept = entries.filter((entry) => entry.rootId !== rootId);
-      if (kept.length !== entries.length) updateAsset(asset.assetId, { folders: kept });
+    if (detached) rememberRecentRoot(detached);
+    const archiveIds = new Set();
+    let keptInUse = 0;
+    if (archive) {
+      for (const asset of assetsExclusiveToRoot(assets.value, rootId)) {
+        if (asset.deletedAt) continue;
+        if (asset.usage?.length) {
+          keptInUse += 1;
+          continue;
+        }
+        archiveIds.add(asset.assetId);
+      }
     }
+    // One array rebuild and one write for the whole detach: stripping entries
+    // per asset leaves the root gone while its entries survive, which is how a
+    // mounted folder ends up orphaned.
+    const stamp = nowIso();
+    let changed = false;
+    const nextAssets = assets.value.map((asset) => {
+      const entries = folderAssetPaths(asset);
+      const hasRoot = entries.some((entry) => entry.rootId === rootId);
+      const toArchive = archiveIds.has(asset.assetId);
+      if (!hasRoot && !toArchive) return asset;
+      const folders = hasRoot ? entries.filter((entry) => entry.rootId !== rootId) : entries;
+      const deletedAt = toArchive ? stamp : asset.deletedAt;
+      if (folders.length === entries.length && deletedAt === asset.deletedAt) return asset;
+      changed = true;
+      return { ...asset, folders, deletedAt, updatedAt: stamp };
+    });
+    if (changed) assets.value = nextAssets;
     if (splitFolderKey(filters.folder)?.rootId === rootId) filters.folder = "";
+    selectedIds.value = selectedIds.value.filter((id) => !archiveIds.has(id));
     flushPersist();
-    return true;
+    return { archived: archiveIds.size, keptInUse };
   }
 
   async function getThumbUrl(assetId) {
@@ -1165,6 +1446,84 @@ export function useAssetLibrary() {
     return { ok: true, blocked: false };
   }
 
+  // Batch mutations rebuild the assets array once and persist once, because
+  // every flushPersist re-serializes the whole index.
+  function addTagsToAssets(assetIds, tags) {
+    const idSet = new Set(assetIds);
+    const additions = (tags || []).map((tag) => String(tag).trim()).filter(Boolean);
+    if (!idSet.size || !additions.length) return 0;
+    let changed = 0;
+    assets.value = assets.value.map((asset) => {
+      if (!idSet.has(asset.assetId) || asset.deletedAt) return asset;
+      const merged = [...new Set([...(asset.tags || []), ...additions])].slice(0, 30);
+      if (merged.length === (asset.tags || []).length) return asset;
+      changed += 1;
+      return { ...asset, tags: merged, updatedAt: nowIso() };
+    });
+    if (changed) flushPersist();
+    return changed;
+  }
+
+  function countUsedAmong(assetIds) {
+    const idSet = new Set(assetIds);
+    return assets.value.filter((asset) => idSet.has(asset.assetId) && asset.usage?.length).length;
+  }
+
+  async function archiveAssets(assetIds, { force = false } = {}) {
+    const idSet = new Set(assetIds);
+    if (!idSet.size) return { ok: false, blocked: false, count: 0 };
+    const blocked = countUsedAmong(assetIds);
+    if (blocked && !force) return { ok: false, blocked: true, count: blocked };
+    const stamp = nowIso();
+    let archived = 0;
+    assets.value = assets.value.map((asset) => {
+      if (!idSet.has(asset.assetId) || asset.deletedAt) return asset;
+      archived += 1;
+      return { ...asset, deletedAt: stamp, updatedAt: stamp };
+    });
+    selectedIds.value = selectedIds.value.filter((id) => !idSet.has(id));
+    await flushPersist();
+    return { ok: true, blocked: false, count: archived };
+  }
+
+  function restoreAssets(assetIds) {
+    const idSet = new Set(assetIds);
+    let restored = 0;
+    assets.value = assets.value.map((asset) => {
+      if (!idSet.has(asset.assetId) || !asset.deletedAt) return asset;
+      restored += 1;
+      return { ...asset, deletedAt: null, updatedAt: nowIso() };
+    });
+    if (restored) {
+      selectedIds.value = selectedIds.value.filter((id) => !idSet.has(id));
+      flushPersist();
+    }
+    return restored;
+  }
+
+  async function purgeAssets(assetIds, { force = false } = {}) {
+    const idSet = new Set(assetIds);
+    if (!idSet.size) return { ok: false, blocked: false, count: 0 };
+    const blocked = countUsedAmong(assetIds);
+    if (blocked && !force) return { ok: false, blocked: true, count: blocked };
+    try {
+      for (const assetId of idSet) {
+        if (isTauri()) await invoke("delete_asset_file", { assetId });
+        else await deleteBrowserAsset(assetId);
+        thumbCache.delete(assetId);
+        sourceCache.delete(assetId);
+      }
+    } catch (err) {
+      error.value = err?.message || String(err);
+      return { ok: false, blocked: false, count: 0, error: error.value };
+    }
+    const purged = assets.value.filter((asset) => idSet.has(asset.assetId)).length;
+    assets.value = assets.value.filter((asset) => !idSet.has(asset.assetId));
+    selectedIds.value = selectedIds.value.filter((id) => !idSet.has(id));
+    await flushPersist();
+    return { ok: true, blocked: false, count: purged };
+  }
+
   function toggleSelection(assetId) {
     selectedIds.value = selectedIds.value.includes(assetId)
       ? selectedIds.value.filter((id) => id !== assetId)
@@ -1237,6 +1596,7 @@ export function useAssetLibrary() {
     hasAssets,
     isDesktop,
     roots,
+    recentRoots,
     folderTree,
     sourceTree,
     staleRoots,
@@ -1245,6 +1605,8 @@ export function useAssetLibrary() {
     rescanRoot,
     rescanAllRoots,
     relocateRoot,
+    remountRoot,
+    assetsUnderRoot,
     detachRoot,
     filteredCount: computed(() => filteredAssets.value.length),
     init,
@@ -1269,6 +1631,11 @@ export function useAssetLibrary() {
     archiveAsset,
     restoreAsset,
     purgeAsset,
+    allTags,
+    addTagsToAssets,
+    archiveAssets,
+    restoreAssets,
+    purgeAssets,
     toggleSelection,
     selectOnly,
     selectAllVisible,

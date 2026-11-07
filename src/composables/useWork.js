@@ -387,6 +387,19 @@ export function useWork() {
     return true;
   }
 
+  function reorderImages(imageIds) {
+    if (!currentWork.value || !Array.isArray(imageIds)) return false;
+    const images = currentWork.value.images;
+    const byId = new Map(images.map((image) => [image.id, image]));
+    const next = imageIds.map((id) => byId.get(id)).filter(Boolean);
+    if (next.length !== images.length) return false;
+    if (next.every((image, index) => image === images[index])) return false;
+    currentWork.value.images = next;
+    currentWork.value.updatedAt = nowIso();
+    persistSoon();
+    return true;
+  }
+
   function updateImage(imageId, patch = {}) {
     if (!currentWork.value) return null;
     const image = currentWork.value.images.find((item) => item.id === imageId);
@@ -431,12 +444,20 @@ export function useWork() {
     return currentWork.value.gallery;
   }
 
-  async function hydrateImages(resolveSource) {
+  async function hydrateImages(resolveSource, { retry = 0 } = {}) {
     if (!currentWork.value || typeof resolveSource !== "function") return;
     let changed = false;
     for (const image of currentWork.value.images) {
       if (image.src) continue;
-      const src = await resolveSource(image.assetId);
+      let src = await resolveSource(image.assetId);
+      // A single miss must not be permanent: the asset index can still be
+      // loading when the first pass runs, and nothing calls this again until the
+      // id list changes — which is why a card could export as a blank background
+      // until the image was re-imported.
+      for (let attempt = 0; !src && attempt < retry; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
+        src = await resolveSource(image.assetId);
+      }
       if (src && !image.src) {
         image.src = src;
         changed = true;
@@ -533,6 +554,7 @@ export function useWork() {
     addImage,
     removeImage,
     moveImage,
+    reorderImages,
     updateImage,
     setCover,
     setCoverDesign,

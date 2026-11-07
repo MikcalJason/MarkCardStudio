@@ -42,9 +42,17 @@ const query = ref("");
 const calibrating = ref(false);
 
 const selectedTemplate = computed(() => findSceneTemplate(props.selectedId));
+// A scene whose photo is missing can neither be previewed nor calibrated, so it
+// leaves the list instead of showing as a broken tile.
+const missingScenes = ref(new Set());
+function handleTileError(scene) {
+  if (props.previews[scene.id] || missingScenes.value.has(scene.id)) return;
+  missingScenes.value = new Set(missingScenes.value).add(scene.id);
+}
 const filtered = computed(() => {
   const needle = query.value.trim().toLowerCase();
   return SCENE_MOCKUP_TEMPLATES.filter((scene) => {
+    if (missingScenes.value.has(scene.id)) return false;
     if (category.value !== "all" && scene.category !== category.value) return false;
     if (!needle) return true;
     const label = t(scene.labelKey).toLowerCase();
@@ -62,6 +70,9 @@ watch(
     }
     query.value = "";
     category.value = "all";
+    // A tile error can be a transient decode refusal, so retry the whole shelf
+    // each time the picker opens instead of hiding a scene for the session.
+    missingScenes.value = new Set();
   },
 );
 </script>
@@ -147,6 +158,7 @@ watch(
                   :alt="t(scene.labelKey)"
                   class="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
                   loading="lazy"
+                  @error="handleTileError(scene)"
                 />
                 <span
                   v-if="selectedId === scene.id"

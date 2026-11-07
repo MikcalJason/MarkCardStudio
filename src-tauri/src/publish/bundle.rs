@@ -6,10 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::files::{display_path, expand_tilde};
 
+/// Bundles are not exported artwork: the user never picks a folder for them, so
+/// every bundle lands in one managed directory under the app's own storage.
+const PUBLISH_ROOT_DIR_NAME: &str = "publish";
 const MAX_BUNDLE_FILE_BYTES: usize = 64 * 1024 * 1024;
 const ALLOWED_EXTENSIONS: [&str; 7] = ["jpg", "jpeg", "png", "json", "txt", "html", "md"];
 const BUNDLE_GENERATOR: &str = "markcard-studio";
@@ -160,6 +163,31 @@ pub fn is_replaceable_bundle(path: &Path) -> bool {
         .and_then(Value::as_str)
         .unwrap_or_default()
         == BUNDLE_GENERATOR
+}
+
+pub fn publish_root_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("Application data directory is not available: {err}"))?
+        .join("markcard")
+        .join(PUBLISH_ROOT_DIR_NAME);
+    fs::create_dir_all(&root).map_err(|err| {
+        format!(
+            "Failed to create the publish bundle folder {}: {err}",
+            root.display()
+        )
+    })?;
+    Ok(root)
+}
+
+/// The one location the publish flow writes to. It is resolved natively so the
+/// webview never has to prompt for a folder it would only ever repeat.
+#[tauri::command]
+pub async fn get_publish_bundle_root(app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || publish_root_dir(&app).map(|path| display_path(&path)))
+        .await
+        .map_err(|err| format!("Task execution failed: {err}"))?
 }
 
 #[tauri::command]

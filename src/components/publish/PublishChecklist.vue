@@ -86,7 +86,7 @@ const counts = computed(
           class="shrink-0 rounded-lg border border-slate-200/90 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-blue-300"
           @click="emit('apply-action', issue)"
         >
-          {{ t("publishFlow.checklist.fix") }}
+          {{ issue.action.labelKey ? t(issue.action.labelKey, issue.params) : t("publishFlow.checklist.fix") }}
         </button>
       </div>
     </div>

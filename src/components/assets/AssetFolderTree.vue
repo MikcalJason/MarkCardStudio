@@ -11,6 +11,8 @@ const props = defineProps({
   },
 });
 
+const emit = defineEmits(["detach-request"]);
+
 const { t } = useI18n();
 const collapsedFolders = ref({});
 
@@ -78,9 +80,22 @@ async function handleRelocate(rootId) {
   await library.relocateRoot(rootId);
 }
 
-function handleDetachRoot(rootId) {
-  if (!window.confirm(t("assets.detachConfirm"))) return;
-  library.detachRoot(rootId);
+function handleDetachRoot(root) {
+  emit("detach-request", { root, ...library.assetsUnderRoot(root.rootId) });
+}
+
+// Scanned folders the user detached stay here so re-importing is one click
+// instead of another trip through the native folder picker.
+const unmountedRoots = computed(() => {
+  const mounted = new Set(library.roots.value.map((root) => root.rootId));
+  const mountedPaths = new Set(library.roots.value.map((root) => root.path));
+  return library.recentRoots.value.filter(
+    (root) => root.path && !mounted.has(root.rootId) && !mountedPaths.has(root.path),
+  );
+});
+
+async function handleRemount(rootId) {
+  await library.remountRoot(rootId);
 }
 </script>
 
@@ -209,9 +224,39 @@ function handleDetachRoot(rootId) {
           class="ml-auto grid h-7 w-7 place-items-center rounded-md text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
           :aria-label="t('assets.detach')"
           :title="t('assets.detachHint')"
-          @click="handleDetachRoot(entry.root.rootId)"
+          @click="handleDetachRoot(entry.root)"
         >
           <AppIcon name="trash-2" :size="12" />
+        </button>
+      </div>
+    </section>
+
+    <section v-if="unmountedRoots.length" class="mt-3">
+      <p class="px-2 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {{ t("assets.recentFolders") }}
+      </p>
+      <div v-for="root in unmountedRoots" :key="root.rootId" class="mt-1 flex items-center gap-1 pl-2">
+        <button
+          type="button"
+          class="flex min-h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          :title="root.path"
+          @click="handleRemount(root.rootId)"
+        >
+          <AppIcon name="folder" :size="13" class="shrink-0 text-slate-400" />
+          <span class="truncate">{{ root.label }}</span>
+          <span class="ml-auto shrink-0 text-[10px] font-semibold tabular-nums text-slate-500">
+            {{ root.imageCount }}
+          </span>
+        </button>
+        <button
+          type="button"
+          class="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          :disabled="library.isImporting.value"
+          :title="t('assets.remountHint')"
+          @click="handleRemount(root.rootId)"
+        >
+          <AppIcon :name="library.isImporting.value ? 'loader' : 'refresh-cw'" :size="12" :class="{ 'animate-spin': library.isImporting.value }" />
+          {{ t("assets.remount") }}
         </button>
       </div>
     </section>
@@ -270,7 +315,7 @@ function handleDetachRoot(rootId) {
     </section>
 
     <p
-      v-if="!folderNav.length && !sourceTree.count"
+      v-if="!folderNav.length && !unmountedRoots.length && !sourceTree.count"
       class="mt-3 px-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400"
     >
       {{ t("assets.emptyTree") }}

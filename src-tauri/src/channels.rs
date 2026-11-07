@@ -128,8 +128,38 @@ fn permission_probes() -> Vec<ProbeSpec> {
             body: Some(analytics_query.clone()),
         },
         ProbeSpec {
+            key: "articleTotal",
+            path: "datacube/getarticletotal",
+            body: Some(analytics_query.clone()),
+        },
+        ProbeSpec {
+            key: "articleRead",
+            path: "datacube/getuserread",
+            body: Some(analytics_query.clone()),
+        },
+        ProbeSpec {
+            key: "articleShare",
+            path: "datacube/getusershare",
+            body: Some(analytics_query.clone()),
+        },
+        ProbeSpec {
             key: "userStats",
             path: "datacube/getusersummary",
+            body: Some(analytics_query.clone()),
+        },
+        ProbeSpec {
+            key: "userCumulate",
+            path: "datacube/getusercumulate",
+            body: Some(analytics_query.clone()),
+        },
+        ProbeSpec {
+            key: "messageStats",
+            path: "datacube/getupstreammsg",
+            body: Some(analytics_query.clone()),
+        },
+        ProbeSpec {
+            key: "interfaceSummary",
+            path: "datacube/getinterfacesummary",
             body: Some(analytics_query),
         },
         ProbeSpec {

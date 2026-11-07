@@ -6,9 +6,9 @@ import AppIcon from "../AppIcon.vue";
 import AppIconButton from "../AppIconButton.vue";
 import {
   SCENE_CATEGORIES,
-  SCENE_MOCKUP_OUTPUT,
   SCENE_MOCKUP_TEMPLATES,
   SCENE_QUAD_POINTS,
+  scenePageSize,
 } from "../../config/sceneMockups.js";
 import {
   canvasToBlob,
@@ -98,16 +98,25 @@ const activeQuad = computed(() => {
   if (dragIndex.value >= 0 && dragQuad.value) {
     return normalizeQuad(dragQuad.value, template.quad);
   }
-  return quadOverrides.value[template.id] || template.quad;
+  return quadForTemplate(template);
 });
 
 const selectedTemplates = computed(() =>
   templates.filter((template) => selectedIds.value.includes(template.id)),
 );
 
+// A scene whose photo is missing can neither be previewed nor exported, so it
+// leaves the shelf instead of sitting there as a broken tile.
+const missingScenes = ref(new Set());
+function handleTileError(template) {
+  if (missingScenes.value.has(template.id)) return;
+  missingScenes.value = new Set(missingScenes.value).add(template.id);
+}
+
 const filteredTemplates = computed(() => {
   const needle = searchQuery.value.trim().toLowerCase();
   return templates.filter((template) => {
+    if (missingScenes.value.has(template.id)) return false;
     if (categoryFilter.value !== "all" && template.category !== categoryFilter.value) return false;
     if (!needle) return true;
     return (
@@ -153,6 +162,20 @@ async function ensureScene(id) {
   return sceneLoads.get(id);
 }
 
+// The committed calibration for a scene, which is what both the frame size and
+// the composite must use. Reading `template.quad` for one and the override for
+// the other renders the card at a scale that no longer matches its plate.
+function quadForTemplate(template) {
+  if (!template) return null;
+  return quadOverrides.value[template.id] || template.quad;
+}
+
+function frameFor(template) {
+  const width = Number(props.renderOptions?.width) || 1080;
+  const height = Number(props.renderOptions?.height) || 1440;
+  return scenePageSize(width, height, quadForTemplate(template), width);
+}
+
 async function renderCardImage() {
   if (!currentPage.value) {
     cardImage.value = null;
@@ -164,17 +187,13 @@ async function renderCardImage() {
   try {
     // Reuse the canonical page renderer so a scene export can never differ from
     // the card the user already saw in preview.
-    // The scene frame is 1536x2048 and the screen inside it is smaller again, so
-    // the card is rendered at the frame's own resolution. html-to-image keeps the
-    // 450px design layout and only raises the pixel ratio, which is what stops a
-    // warped-down screen from turning the card's type into mush.
+    // The frame follows the calibrated quad (same helper the gallery uses), so
+    // the card keeps its own pixel width inside the warped screen. html-to-image
+    // keeps the 450px design layout and only raises the pixel ratio.
     const platformWidth = Number(props.renderOptions?.width) || 1080;
     const platformHeight = Number(props.renderOptions?.height) || 1440;
-    const frameLongSide = Math.max(SCENE_MOCKUP_OUTPUT.width, SCENE_MOCKUP_OUTPUT.height);
-    const renderScale = Math.max(
-      1,
-      Math.min(2, frameLongSide / Math.max(platformWidth, platformHeight)),
-    );
+    const frame = frameFor(activeTemplate.value);
+    const renderScale = Math.max(1, Math.min(3, frame.width / platformWidth));
     const { blob } = await renderPageToImage(currentPage.value, {
       ...props.renderOptions,
       width: Math.round(platformWidth * renderScale),
@@ -202,6 +221,12 @@ async function renderCardImage() {
   }
 }
 
+function clearPreview() {
+  const target = previewCanvas.value;
+  if (!target) return;
+  target.getContext("2d")?.clearRect(0, 0, target.width, target.height);
+}
+
 async function refreshPreview() {
   const template = activeTemplate.value;
   const quad = activeQuad.value;
@@ -210,7 +235,13 @@ async function refreshPreview() {
   previewBusy.value = true;
   try {
     const scene = await ensureScene(template.id);
-    if (!scene || token !== previewToken) return;
+    if (token !== previewToken) return;
+    if (!scene) {
+      // Leaving the previous scene on the canvas made a failed composition look
+      // like it had applied, so blank it instead of showing stale pixels.
+      clearPreview();
+      return;
+    }
     const canvas = composeSceneMockup({
       sceneImage: scene,
       cardImage: cardImage.value,
@@ -221,7 +252,11 @@ async function refreshPreview() {
       width: PREVIEW_WIDTH,
       height: PREVIEW_HEIGHT,
     });
-    if (!canvas || token !== previewToken) return;
+    if (token !== previewToken) return;
+    if (!canvas) {
+      clearPreview();
+      return;
+    }
     const target = previewCanvas.value;
     if (!target) return;
     target.width = canvas.width;
@@ -261,7 +296,9 @@ function selectTemplate(id) {
   }
   dragIndex.value = -1;
   dragQuad.value = null;
-  refreshPreview();
+  // The frame follows the scene's quad, so switching scenes means the card must
+  // be re-rasterized at the new size before the preview is composed.
+  renderCardImage().then(refreshPreview);
 }
 
 function toggleTemplate(id) {
@@ -360,27 +397,40 @@ async function handleExport() {
     const baseName = createOutputFolderName(props.sourcePath);
     const total = selectedTemplates.value.length;
     let saved = 0;
+    let skipped = 0;
     for (let index = 0; index < total; index += 1) {
       const template = selectedTemplates.value[index];
       status.value = t("sceneMockup.exportingProgress", {
         current: index + 1,
         total,
       });
+      // One unusable scene must not throw away the images already written: skip
+      // it, keep going, and report the count at the end.
       const scene = await ensureScene(template.id);
-      if (!scene) throw new Error(t("sceneMockup.composeFailed"));
+      if (!scene) {
+        skipped += 1;
+        continue;
+      }
+      const frame = frameFor(template);
       const canvas = composeSceneMockup({
         sceneImage: scene,
         cardImage: cardImage.value,
-        quad: quadOverrides.value[template.id] || template.quad,
+        quad: quadForTemplate(template),
         fit: template.fit || "cover",
         lighting: template.lighting,
         cornerRadius: template.cornerRadius,
-        width: SCENE_MOCKUP_OUTPUT.width,
-        height: SCENE_MOCKUP_OUTPUT.height,
+        width: frame.width,
+        height: frame.height,
       });
-      if (!canvas) throw new Error(t("sceneMockup.composeFailed"));
+      if (!canvas) {
+        skipped += 1;
+        continue;
+      }
       const blob = await canvasToBlob(canvas, "image/png");
-      if (!blob) throw new Error(t("sceneMockup.composeFailed"));
+      if (!blob) {
+        skipped += 1;
+        continue;
+      }
       const fileName = `${baseName}-scene-${template.id}.png`;
       if (props.isTauri) {
         const base64Data = await blobToBase64(blob);
@@ -395,7 +445,9 @@ async function handleExport() {
       }
       saved += 1;
     }
-    status.value = t("sceneMockup.exportDone", { count: saved });
+    status.value = skipped
+      ? t("sceneMockup.exportPartial", { count: saved, skipped })
+      : t("sceneMockup.exportDone", { count: saved });
     emit("exported", status.value);
   } catch (err) {
     error.value = t("sceneMockup.exportFailed", { error: err?.message || err });
@@ -528,6 +580,7 @@ onBeforeUnmount(() => {
                   :alt="t(template.labelKey)"
                   class="h-16 w-16 shrink-0 rounded-lg object-cover"
                   loading="lazy"
+                  @error="handleTileError(template)"
                 />
                 <div class="min-w-0 flex-1">
                   <p class="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">

@@ -11,9 +11,18 @@ function t(key, params) {
 const REMAINING_TICK_MS = 1000;
 const STATS_POLL_MS = 2500;
 const MAX_QR_PAGES = 99;
+// Mirrors MAX_PREVIEW_TOTAL_BYTES in src-tauri/src/qr_preview.rs; the native side
+// rejects the whole session, so the UI stops earlier and explains what to do.
+const MAX_QR_BYTES = 96 * 1024 * 1024;
 const QUIET_ZONE = 4;
 const MAX_DIALOG_THUMBS = 12;
 const THUMB_LONG_SIDE = 360;
+// A scene page is a full-bleed photo, so its lossless PNG runs to several
+// megabytes. A phone pulling five of those at once over Wi-Fi drops connections
+// mid-body and shows a broken page, so the phone copy is bounded: same pixels
+// while it fits, one JPEG generation once it does not.
+const PHONE_PAGE_MAX_BYTES = 2.5 * 1024 * 1024;
+const PHONE_PAGE_MAX_LONG_SIDE = 2160;
 
 /**
  * Scan-to-preview state: renders the document through the shared card renderer,
@@ -121,23 +130,33 @@ export function useQrPreview({ pages, renderOptions, selectedFormat, ensurePages
       const ext = selectedFormat?.value === "JPG" ? "jpg" : "png";
       const files = [];
       const thumbsList = [];
+      let payloadBytes = 0;
       for (let i = 0; i < allPages.length; i += 1) {
         progressText.value = t("qrPreview.renderingPage", {
           current: i + 1,
           total: allPages.length,
         });
-        const dataUrl = await capturePage(
-          allPages[i],
-          {
-            ...renderOptions.value,
-            format: ext === "jpg" ? "JPG" : "PNG",
-            pageNumber: i + 1,
-            totalPages: allPages.length,
-          },
-          renderOptions.value?.backgroundColor,
-        );
+        const captured = await capturePage(allPages[i], {
+          ...renderOptions.value,
+          format: ext === "jpg" ? "JPG" : "PNG",
+          pageNumber: i + 1,
+          totalPages: allPages.length,
+        });
         if (seq !== sessionSeq) return;
-        files.push({ name: `${String(i + 1).padStart(2, "0")}.${ext}`, dataUrl });
+        const dataUrl = await boundPageForPhone(captured);
+        const pageExt = /^data:image\/jpeg/i.test(dataUrl) ? "jpg" : "png";
+        // The preview server rejects a session over its byte budget only after
+        // every page is rendered, so stop here with an actionable message.
+        payloadBytes += approxDataUrlBytes(dataUrl);
+        if (payloadBytes > MAX_QR_BYTES) {
+          throw new Error(
+            t("qrPreview.tooLarge", {
+              size: (payloadBytes / (1024 * 1024)).toFixed(0),
+              max: Math.round(MAX_QR_BYTES / (1024 * 1024)),
+            }),
+          );
+        }
+        files.push({ name: `${String(i + 1).padStart(2, "0")}.${pageExt}`, dataUrl });
         if (thumbsList.length < MAX_DIALOG_THUMBS) {
           thumbsList.push(await makeThumb(dataUrl));
         }
@@ -146,7 +165,7 @@ export function useQrPreview({ pages, renderOptions, selectedFormat, ensurePages
 
       const started = await invoke("qr_preview_start", {
         files,
-        indexHtml: buildPhoneIndexHtml(files, ext),
+        indexHtml: buildPhoneIndexHtml(files),
       });
       if (seq !== sessionSeq) return;
 
@@ -174,16 +193,16 @@ export function useQrPreview({ pages, renderOptions, selectedFormat, ensurePages
    * the whole foreignObject), and the phone must never receive such a page.
    * A fresh mount usually paints, so it gets one retry before failing.
    */
-  async function capturePage(page, options, backgroundColor) {
+  async function capturePage(page, options) {
     const first = await renderPageToImage(page, options);
     const firstUrl = await blobToDataUrl(first.blob);
-    if (!(await looksBlankCapture(firstUrl, backgroundColor))) return firstUrl;
+    if (!(await looksBlankCapture(firstUrl))) return firstUrl;
 
     // Let the WebView finish the paint it was interrupting before re-mounting.
     await new Promise((resolve) => setTimeout(resolve, 350));
     const retry = await renderPageToImage(page, options);
     const retryUrl = await blobToDataUrl(retry.blob);
-    if (await looksBlankCapture(retryUrl, backgroundColor)) {
+    if (await looksBlankCapture(retryUrl)) {
       throw new Error(t("qrPreview.blankPage", { page: options.pageNumber }));
     }
     return retryUrl;
@@ -252,10 +271,10 @@ export function useQrPreview({ pages, renderOptions, selectedFormat, ensurePages
 }
 
 /**
- * The phone page lists the finished pages. Images stay exact; labels use the
- * desktop session's language so the phone readout matches the app.
+ * The phone page lists the finished pages. Labels use the desktop session's
+ * language so the phone readout matches the app.
  */
-function buildPhoneIndexHtml(files, ext) {
+function buildPhoneIndexHtml(files) {
   const locale = (i18n.global.locale?.value || "zh-CN").toLowerCase();
   const items = files
     .map(
@@ -354,7 +373,7 @@ function loadImage(dataUrl) {
  * nothing painted over it. Sampled from the inner area so the card's own edge
  * treatment cannot mask the failure.
  */
-async function looksBlankCapture(dataUrl, backgroundColor) {
+async function looksBlankCapture(dataUrl) {
   const img = await loadImage(dataUrl);
   const width = img.naturalWidth || 1080;
   const height = img.naturalHeight || 1440;
@@ -364,6 +383,8 @@ async function looksBlankCapture(dataUrl, backgroundColor) {
   probe.height = Math.round(size * 1.33);
   const context = probe.getContext("2d", { willReadFrequently: true });
   if (!context) return false;
+  // White underlay: a transparent page then reads as white instead of as an
+  // undefined colour, which keeps the comparison below single-valued.
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, probe.width, probe.height);
   context.drawImage(
@@ -377,35 +398,59 @@ async function looksBlankCapture(dataUrl, backgroundColor) {
     probe.width,
     probe.height,
   );
-  const background = parseHexRgb(backgroundColor);
+  // A dropped clone leaves one flat colour — the capture background, white, or
+  // the gallery matte — so comparing against any single reference colour keeps
+  // this honest for every background setting instead of whitelisting a few.
   const data = context.getImageData(0, 0, probe.width, probe.height).data;
+  const [red, green, blue] = data;
+  const tolerance = 6;
   for (let index = 0; index < data.length; index += 4) {
-    if (isFlatPixel(data[index], data[index + 1], data[index + 2], background)) continue;
+    if (
+      Math.abs(data[index] - red) <= tolerance
+      && Math.abs(data[index + 1] - green) <= tolerance
+      && Math.abs(data[index + 2] - blue) <= tolerance
+    ) {
+      continue;
+    }
     return false;
   }
   return true;
 }
 
-function isFlatPixel(red, green, blue, background) {
-  // White is the underlay for transparent captures.
-  if (red >= 246 && green >= 246 && blue >= 246) return true;
-  if (!background) return false;
-  return (
-    Math.abs(red - background[0]) <= 10
-    && Math.abs(green - background[1]) <= 10
-    && Math.abs(blue - background[2]) <= 10
-  );
+/**
+ * Keeps a page inside what a phone can actually pull: a multi-megapixel scene
+ * page stays at full pixels as one JPEG generation, and only a page that is
+ * still oversized afterwards is scaled to the phone-side limit.
+ */
+async function boundPageForPhone(dataUrl) {
+  if (approxDataUrlBytes(dataUrl) <= PHONE_PAGE_MAX_BYTES) return dataUrl;
+  let img;
+  try {
+    img = await loadImage(dataUrl);
+  } catch {
+    return dataUrl;
+  }
+  const width = img.naturalWidth || 1080;
+  const height = img.naturalHeight || 1440;
+  const scale = Math.min(1, PHONE_PAGE_MAX_LONG_SIDE / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) return dataUrl;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const jpeg = canvas.toDataURL("image/jpeg", 0.92);
+  // Never trade bytes for quality without a gain: a page that compresses badly
+  // still is better served lossless.
+  return approxDataUrlBytes(jpeg) < approxDataUrlBytes(dataUrl) ? jpeg : dataUrl;
 }
 
-function parseHexRgb(value) {
-  const match = String(value || "").trim().match(/^#([0-9a-f]{6})$/i);
-  if (!match) return null;
-  const hex = match[1];
-  return [
-    Number.parseInt(hex.slice(0, 2), 16),
-    Number.parseInt(hex.slice(2, 4), 16),
-    Number.parseInt(hex.slice(4, 6), 16),
-  ];
+function approxDataUrlBytes(dataUrl) {
+  const comma = dataUrl.indexOf(",");
+  const payload = comma >= 0 ? dataUrl.length - comma - 1 : dataUrl.length;
+  return Math.ceil((payload * 3) / 4);
 }
 
 /**

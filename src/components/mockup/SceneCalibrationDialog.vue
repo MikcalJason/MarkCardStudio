@@ -16,6 +16,7 @@ import {
   writeImageQuadOverride,
   writeSceneQuadOverride,
 } from "../../storage/sceneMockupTemplates.js";
+import { autoFitQuad } from "../../utils/sceneAutoFit.js";
 
 // One calibration surface for both targets: the scene default (the panel inside
 // the photo) and a single image's own correction. The gallery opens the second
@@ -61,6 +62,39 @@ const CALIBRATE_DRAG_LONG_SIDE = 380;
 let compositeQueued = false;
 let cardSrcCache = "";
 
+// The canvas backing store (canvas.width/height) is reallocated between the
+// full and reduced drag resolutions, but the on-screen size must stay put or
+// the picture visibly shrinks mid-drag and the handles jump. So the CSS size is
+// computed once from the scene's aspect ratio and the viewport, and the backing
+// store is never allowed to resize the element.
+const canvasStyle = ref({});
+
+function computeDisplaySize() {
+  const scene = sceneImage.value;
+  const sw = scene?.naturalWidth || scene?.width || 0;
+  const sh = scene?.naturalHeight || scene?.height || 0;
+  if (!sw || !sh) return;
+  const maxH = Math.min(window.innerHeight * 0.72, 680);
+  const maxW = Math.max(160, window.innerWidth - 32);
+  const ratio = sw / sh;
+  let w = maxW;
+  let h = w / ratio;
+  if (h > maxH) {
+    h = maxH;
+    w = h * ratio;
+  }
+  if (w < 160) {
+    w = 160;
+    h = w / ratio;
+  }
+  canvasStyle.value = { width: `${Math.round(w)}px`, height: `${Math.round(h)}px` };
+}
+
+function onWindowResize() {
+  computeDisplaySize();
+}
+window.addEventListener("resize", onWindowResize);
+
 function scheduleComposite() {
   if (compositeQueued) return;
   compositeQueued = true;
@@ -100,9 +134,10 @@ function renderComposite() {
           lighting: scene0.lighting,
           cornerRadius: scene0.cornerRadius,
           fit: scene0.fit,
+          fast: dragIndex.value >= 0,
           width: canvas.width,
           height: canvas.height,
-        })
+          })
       : null;
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(composite || scene, 0, 0, canvas.width, canvas.height);
@@ -114,6 +149,7 @@ function start() {
   loading.value = true;
   sceneImage.value = null;
   quad.value = { ...(resolveSceneQuad(scene0.id, props.imageId) || scene0.quad) };
+  initialQuad.value = { ...quad.value };
   if (cardSrcCache !== props.cardSrc) {
     cardSrcCache = props.cardSrc || "";
     cardImage.value = null;
@@ -123,6 +159,7 @@ function start() {
       if (!props.open || template.value?.id !== scene0.id) return;
       sceneImage.value = image;
       loading.value = false;
+      computeDisplaySize();
       scheduleComposite();
     })
     .catch(() => {
@@ -140,16 +177,32 @@ function start() {
   }
 }
 
+// Only a real drag is worth storing: writing an unchanged quad still forces a
+// full scene re-composite (and an override the user never made).
+const initialQuad = ref(null);
+
+function sameQuad(a, b) {
+  if (!a || !b) return false;
+  return SCENE_QUAD_POINTS.every((key) => {
+    const first = a[key];
+    const second = b[key];
+    if (!first || !second) return false;
+    return Math.abs(first[0] - second[0]) < 0.0005 && Math.abs(first[1] - second[1]) < 0.0005;
+  });
+}
+
 function commit() {
   const scene0 = template.value;
-  if (!scene0 || !quad.value) return;
+  if (!scene0 || !quad.value) return false;
+  if (sameQuad(quad.value, initialQuad.value)) return false;
   if (props.imageId) writeImageQuadOverride(props.imageId, scene0.id, quad.value);
   else writeSceneQuadOverride(scene0.id, quad.value);
+  initialQuad.value = { ...quad.value };
+  return true;
 }
 
 function stop() {
-  commit();
-  emit("saved");
+  if (commit()) emit("saved");
   emit("close");
 }
 
@@ -159,8 +212,41 @@ function reset() {
   if (props.imageId) clearImageQuadOverride(props.imageId, scene0.id);
   else clearSceneQuadOverride(scene0.id);
   quad.value = { ...(resolveSceneQuad(scene0.id, props.imageId) || scene0.quad) };
+  initialQuad.value = { ...quad.value };
   scheduleComposite();
   emit("saved");
+}
+
+// One-click alignment: snap the four edges onto the photo's real boundaries.
+// The detector only moves an edge when it finds a confident line inside a
+// narrow band around it, and rejects the whole fit when a corner would have to
+// travel implausibly far — so a busy photo leaves the quad untouched instead of
+// scattering it.
+const autoFitNotice = ref("");
+let autoFitNoticeTimer = 0;
+
+function showAutoFitNotice(text) {
+  autoFitNotice.value = text;
+  clearTimeout(autoFitNoticeTimer);
+  autoFitNoticeTimer = setTimeout(() => {
+    autoFitNotice.value = "";
+  }, 2600);
+}
+
+function autoFit() {
+  const scene0 = template.value;
+  if (!scene0 || !sceneImage.value || !quad.value) return;
+  const fitted = autoFitQuad(sceneImage.value, quad.value);
+  // No confident edge anywhere leaves the quad untouched, which would otherwise
+  // read as a dead button rather than as "nothing found in this photo".
+  if (!fitted || sameQuad(fitted, quad.value)) {
+    showAutoFitNotice(t("sceneMockup.autoFitFailed"));
+    return;
+  }
+  quad.value = fitted;
+  const changed = commit();
+  scheduleComposite();
+  if (changed) emit("saved");
 }
 
 watch(
@@ -171,18 +257,19 @@ watch(
   { immediate: true },
 );
 
+let dragPointerId = -1;
+
 function onPointerDown(event, index) {
   event.preventDefault();
   event.stopPropagation();
   dragIndex.value = index;
-  try {
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-  } catch {
-    // Nothing else to undo: the window listeners below already carry the drag.
-  }
+  dragPointerId = event.pointerId;
+  // The window-level move/up listeners already carry the drag across the whole
+  // dialog, so pointer capture is unnecessary — and its residual capture state
+  // is what made the second press ignore pointerdown on some WebKit builds.
   window.addEventListener("pointermove", onPointerMove);
-  window.addEventListener("pointerup", onPointerUp, { once: true });
-  window.addEventListener("pointercancel", onPointerUp, { once: true });
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerCancel);
 }
 
 function onPointerMove(event) {
@@ -197,19 +284,37 @@ function onPointerMove(event) {
   scheduleComposite();
 }
 
-function onPointerUp() {
+function endDrag(event) {
+  if (event && dragPointerId >= 0 && event.pointerId !== dragPointerId) return;
   window.removeEventListener("pointermove", onPointerMove);
+  window.removeEventListener("pointerup", onPointerUp);
+  window.removeEventListener("pointercancel", onPointerCancel);
   if (dragIndex.value < 0) return;
   dragIndex.value = -1;
+  dragPointerId = -1;
   // Live-commit on each drag end so previews regenerate immediately, then redraw
   // the frame at full size instead of the reduced drag resolution.
-  commit();
+  const changed = commit();
   scheduleComposite();
-  emit("saved");
+  // A bare click (no actual corner move) must not trigger a gallery-wide
+  // re-composite: that work steals the very next drag's frame budget.
+  if (changed) emit("saved");
+}
+
+function onPointerUp(event) {
+  endDrag(event);
+}
+
+function onPointerCancel(event) {
+  endDrag(event);
 }
 
 onBeforeUnmount(() => {
+  clearTimeout(autoFitNoticeTimer);
   window.removeEventListener("pointermove", onPointerMove);
+  window.removeEventListener("pointerup", onPointerUp);
+  window.removeEventListener("pointercancel", onPointerCancel);
+  window.removeEventListener("resize", onWindowResize);
   // The dialog is the main consumer of the cached card pixels.
   releaseCardPixels();
 });
@@ -240,8 +345,20 @@ const title = computed(() => {
       :aria-label="t('sceneMockup.calibrate')"
     >
       <div class="flex w-full max-w-2xl items-center justify-between gap-3">
-        <p class="min-w-0 truncate text-sm font-semibold text-white">{{ title }}</p>
+        <p
+          class="min-w-0 truncate text-sm font-semibold"
+          :class="autoFitNotice ? 'text-amber-300' : 'text-white'"
+        >{{ autoFitNotice || title }}</p>
         <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="inline-flex h-7 items-center gap-1 rounded-lg border border-white/20 bg-white/10 px-2.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/20 disabled:opacity-60"
+            :disabled="!sceneImage"
+            @click="autoFit"
+          >
+            <AppIcon name="sparkles" :size="12" />
+            {{ t("sceneMockup.autoFit") }}
+          </button>
           <button
             type="button"
             class="inline-flex h-7 items-center gap-1 rounded-lg border border-white/20 bg-white/10 px-2.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/20"
@@ -269,8 +386,8 @@ const title = computed(() => {
         <canvas
           ref="canvasRef"
           :aria-label="t('sceneMockup.calibrate')"
-          class="h-auto max-h-[min(72vh,680px)] w-auto max-w-full"
           :class="sceneImage ? 'block' : 'hidden'"
+          :style="canvasStyle"
         />
         <div v-if="!sceneImage || loading" class="grid min-h-40 min-w-40 place-items-center text-white/60">
           <AppIcon name="spinner" :size="24" class="animate-spin" />
@@ -287,7 +404,7 @@ const title = computed(() => {
             v-for="(key, index) in SCENE_QUAD_POINTS"
             :key="key"
             type="button"
-            class="absolute z-10 -ml-1.5 -mt-1.5 h-3 w-3 touch-none rounded-full border border-white/95 bg-blue-600/85 shadow-sm outline-none ring-offset-1 transition after:absolute after:-inset-2 after:content-[''] hover:scale-125 hover:bg-blue-600 focus-visible:ring-2 focus-visible:ring-blue-300"
+            class="absolute z-10 -ml-1.5 -mt-1.5 h-3 w-3 touch-none rounded-full border border-white/95 bg-blue-600/85 shadow-sm outline-none ring-offset-1 transition-colors after:absolute after:-inset-2 after:content-[''] hover:bg-blue-600 focus-visible:ring-2 focus-visible:ring-blue-300"
             :style="{
               left: `${(quad[key]?.[0] ?? 0) * 100}%`,
               top: `${(quad[key]?.[1] ?? 0) * 100}%`,

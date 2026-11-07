@@ -6,6 +6,7 @@ import AssetCard from "./AssetCard.vue";
 import AssetDetail from "./AssetDetail.vue";
 import AssetFolderTree from "./AssetFolderTree.vue";
 import AssetThumbnail from "./AssetThumbnail.vue";
+import ConfirmDialog from "../ConfirmDialog.vue";
 import ImageEditorDialog from "./ImageEditorDialog.vue";
 import LibrarySelect from "./LibrarySelect.vue";
 import { formatBytes } from "../../utils/imageFiles.js";
@@ -65,6 +66,10 @@ const sourceOptions = computed(() =>
     label: source === "all" ? t("assets.filters.sourceAll") : t(`assets.sources.${source}`),
   })),
 );
+const tagOptions = computed(() => [
+  { value: "", label: t("assets.filters.tagAll") },
+  ...props.library.allTags.value.map((tag) => ({ value: tag, label: tag })),
+]);
 const staleRoots = computed(() => props.library.staleRoots.value);
 const visibleAssets = computed(() => props.library.filteredAssets.value.slice(0, visibleCount.value));
 // The management surface sends either the explicit selection or whatever card is
@@ -89,6 +94,7 @@ const hasActiveFilters = computed(() =>
     props.library.query.value.trim()
     || props.library.filters.usage !== "all"
     || props.library.filters.source !== "all"
+    || props.library.filters.tag
     || props.library.filters.folder
     || props.library.filters.trash,
   ),
@@ -261,34 +267,201 @@ async function handleBrowserFiles(event) {
   }
 }
 
+const confirmRequest = ref(null);
+const confirmBusy = ref(false);
+const actionMessage = ref("");
+const detachRequest = ref(null);
+const detachArchive = ref(false);
+const detachBusy = ref(false);
+const batchTagsOpen = ref(false);
+const batchTagsInput = ref("");
+
+const batchTagSuggestions = computed(() => {
+  const typed = new Set(
+    batchTagsInput.value
+      .split(/[,，]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean),
+  );
+  return props.library.allTags.value.filter((tag) => !typed.has(tag)).slice(0, 12);
+});
+
+function askConfirm(options) {
+  confirmRequest.value = options;
+}
+
+async function runConfirm() {
+  const request = confirmRequest.value;
+  if (!request) return;
+  confirmBusy.value = true;
+  try {
+    await request.run();
+  } finally {
+    confirmBusy.value = false;
+    // A blocked action replaces the request with its force-confirm follow-up;
+    // only close the dialog when nothing re-opened it.
+    if (confirmRequest.value === request) confirmRequest.value = null;
+  }
+}
+
+function flashActionMessage(message) {
+  actionMessage.value = message;
+  props.library.importMessage.value = "";
+}
+
+function handleDetachRequest(payload) {
+  detachArchive.value = false;
+  detachRequest.value = payload;
+}
+
+function runDetach() {
+  const request = detachRequest.value;
+  if (!request) return;
+  detachBusy.value = true;
+  try {
+    const result = props.library.detachRoot(request.root.rootId, { archive: detachArchive.value });
+    const parts = [t("assets.detachDone", { label: request.root.label })];
+    if (result.archived) parts.push(t("assets.detachArchived", { count: result.archived }));
+    if (result.keptInUse) parts.push(t("assets.detachKeptInUse", { count: result.keptInUse }));
+    flashActionMessage(parts.join(" · "));
+    detachRequest.value = null;
+  } finally {
+    detachBusy.value = false;
+  }
+}
+
 async function handleArchive(asset) {
   if (asset.deletedAt) {
     props.library.restoreAsset(asset.assetId);
     return;
   }
-  let result = await props.library.archiveAsset(asset.assetId);
-  if (result.blocked) {
-    const confirmed = window.confirm(
-      t("assets.archiveBlocked", { count: result.usage?.length || 0 }),
-    );
-    if (!confirmed) return;
-    result = await props.library.archiveAsset(asset.assetId, { force: true });
-  }
+  const result = await props.library.archiveAsset(asset.assetId);
+  if (!result.blocked) return;
+  askConfirm({
+    title: t("assets.archive"),
+    description: t("assets.archiveBlocked", { count: result.usage?.length || 0 }),
+    confirmLabel: t("assets.archive"),
+    tone: "danger",
+    icon: "trash-2",
+    run: () => props.library.archiveAsset(asset.assetId, { force: true }),
+  });
 }
 
 async function handlePurge(asset) {
-  let result = await props.library.purgeAsset(asset.assetId);
+  const result = await props.library.purgeAsset(asset.assetId);
   if (result.blocked) {
-    const confirmed = window.confirm(
-      t("assets.purgeBlocked", { count: result.usage?.length || 0 }),
-    );
-    if (!confirmed) return;
-    result = await props.library.purgeAsset(asset.assetId, { force: true });
+    askConfirm({
+      title: t("assets.deleteForever"),
+      description: t("assets.purgeBlocked", { count: result.usage?.length || 0 }),
+      confirmLabel: t("assets.deleteForever"),
+      tone: "danger",
+      icon: "trash-2",
+      run: async () => {
+        const forced = await props.library.purgeAsset(asset.assetId, { force: true });
+        if (forced.ok) {
+          activeId.value = "";
+          previewUrl.value = "";
+        }
+      },
+    });
+    return;
   }
   if (result.ok) {
     activeId.value = "";
     previewUrl.value = "";
   }
+}
+
+function openBatchTags() {
+  batchTagsInput.value = "";
+  batchTagsOpen.value = true;
+}
+
+function applyBatchTags() {
+  const tags = batchTagsInput.value
+    .split(/[,，]/)
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  if (!tags.length) return;
+  const count = props.library.addTagsToAssets(
+    selectedAssets.value.map((asset) => asset.assetId),
+    tags,
+  );
+  batchTagsOpen.value = false;
+  flashActionMessage(t("assets.batchTagsDone", { count }));
+}
+
+function handleBatchArchive() {
+  const ids = selectedAssets.value.map((asset) => asset.assetId);
+  askConfirm({
+    title: t("assets.batchArchiveTitle", { count: ids.length }),
+    description: t("assets.batchArchiveDesc"),
+    confirmLabel: t("assets.archive"),
+    tone: "danger",
+    icon: "trash-2",
+    run: async () => {
+      let result = await props.library.archiveAssets(ids);
+      if (result.blocked) {
+        askConfirm({
+          title: t("assets.batchArchiveTitle", { count: ids.length }),
+          description: t("assets.batchArchiveBlocked", { count: result.count }),
+          confirmLabel: t("assets.archive"),
+          tone: "danger",
+          icon: "trash-2",
+          run: async () => {
+            const forced = await props.library.archiveAssets(ids, { force: true });
+            flashActionMessage(t("assets.batchArchived", { count: forced.count }));
+          },
+        });
+        return;
+      }
+      flashActionMessage(t("assets.batchArchived", { count: result.count }));
+    },
+  });
+}
+
+function handleBatchRestore() {
+  const count = props.library.restoreAssets(
+    selectedAssets.value.map((asset) => asset.assetId),
+  );
+  flashActionMessage(t("assets.batchRestored", { count }));
+}
+
+function handleBatchPurge() {
+  const ids = selectedAssets.value.map((asset) => asset.assetId);
+  askConfirm({
+    title: t("assets.batchPurgeTitle", { count: ids.length }),
+    description: t("assets.batchPurgeDesc"),
+    confirmLabel: t("assets.deleteForever"),
+    tone: "danger",
+    icon: "trash-2",
+    run: async () => {
+      let result = await props.library.purgeAssets(ids);
+      if (result.blocked) {
+        askConfirm({
+          title: t("assets.batchPurgeTitle", { count: ids.length }),
+          description: t("assets.batchPurgeBlocked", { count: result.count }),
+          confirmLabel: t("assets.deleteForever"),
+          tone: "danger",
+          icon: "trash-2",
+          run: async () => {
+            const forced = await props.library.purgeAssets(ids, { force: true });
+            if (forced.ok) {
+              activeId.value = "";
+              previewUrl.value = "";
+            }
+            flashActionMessage(t("assets.batchPurged", { count: forced.count }));
+          },
+        });
+        return;
+      }
+      if (result.ok) {
+        activeId.value = "";
+        previewUrl.value = "";
+      }
+      flashActionMessage(t("assets.batchPurged", { count: result.count }));
+    },
+  });
 }
 
 function openImageEditor(asset) {
@@ -415,7 +588,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
             class="w-60 shrink-0 flex-col border-r border-slate-200/80 px-2 py-3 dark:border-slate-800"
             :class="embedded ? 'flex' : 'hidden lg:flex'"
           >
-            <AssetFolderTree class="min-h-0 flex-1" :library="library" />
+            <AssetFolderTree
+              class="min-h-0 flex-1"
+              :library="library"
+              @detach-request="handleDetachRequest"
+            />
           </aside>
 
           <div class="flex min-w-0 flex-1 flex-col">
@@ -470,6 +647,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
                   />
                 </span>
 
+                <LibrarySelect
+                  v-if="library.allTags.value.length"
+                  :model-value="library.filters.tag"
+                  :options="tagOptions"
+                  :aria-label="t('assets.filterTag')"
+                  @update:model-value="library.setFilter('tag', $event)"
+                />
+
                 <button
                   type="button"
                   class="inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors"
@@ -523,7 +708,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
                 </div>
               </div>
 
-              <p v-if="library.importMessage.value" class="mt-2 flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              <p v-if="actionMessage" class="mt-2 flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                <AppIcon name="check-circle" :size="13" class="shrink-0" />
+                {{ actionMessage }}
+              </p>
+              <p v-else-if="library.importMessage.value" class="mt-2 flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
                 <AppIcon name="check-circle" :size="13" class="shrink-0" />
                 {{ library.importMessage.value }}
               </p>
@@ -670,6 +859,45 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
               >
                 {{ t("assets.clearSelection") }}
               </button>
+
+              <template v-if="!pickerMode && selectedAssets.length">
+                <button
+                  v-if="!library.filters.trash"
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  @click="openBatchTags"
+                >
+                  <AppIcon name="tag" :size="12" />
+                  {{ t("assets.batchTags") }}
+                </button>
+                <button
+                  v-if="!library.filters.trash"
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-red-50 hover:text-red-700 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+                  @click="handleBatchArchive"
+                >
+                  <AppIcon name="trash-2" :size="12" />
+                  {{ t("assets.archive") }}
+                </button>
+                <button
+                  v-if="library.filters.trash"
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  @click="handleBatchRestore"
+                >
+                  <AppIcon name="rotate-ccw" :size="12" />
+                  {{ t("assets.restore") }}
+                </button>
+                <button
+                  v-if="library.filters.trash"
+                  type="button"
+                  class="inline-flex h-7 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-red-50 hover:text-red-700 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-red-950/40 dark:hover:text-red-300"
+                  @click="handleBatchPurge"
+                >
+                  <AppIcon name="trash-2" :size="12" />
+                  {{ t("assets.deleteForever") }}
+                </button>
+              </template>
               <button
                 v-if="pickerMode"
                 type="button"
@@ -741,5 +969,91 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
       @close="editingAsset = null"
       @save="handleImageEditorSave"
     />
+
+    <ConfirmDialog
+      :open="Boolean(detachRequest)"
+      :title="t('assets.detach')"
+      :description="t('assets.detachConfirm')"
+      :confirm-label="t('assets.detach')"
+      :cancel-label="t('common.cancel')"
+      icon="trash-2"
+      tone="danger"
+      :busy="detachBusy"
+      @cancel="detachRequest = null"
+      @confirm="runDetach"
+    >
+      <div v-if="detachRequest" class="mt-3 space-y-2">
+        <label class="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300">
+          <input
+            v-model="detachArchive"
+            type="checkbox"
+            class="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500/30 dark:border-slate-600 dark:bg-slate-800"
+            :disabled="!detachRequest.total"
+          />
+          <span>
+            <span class="font-semibold">
+              {{ t("assets.detachArchiveOption", { count: detachRequest.total }) }}
+            </span>
+            <span class="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">
+              {{ t("assets.detachArchiveHint") }}
+            </span>
+            <span v-if="detachRequest.inUse" class="mt-0.5 block text-[11px] text-amber-600 dark:text-amber-400">
+              {{ t("assets.detachInUseNote", { count: detachRequest.inUse }) }}
+            </span>
+          </span>
+        </label>
+        <p class="truncate text-[10px] text-slate-500 dark:text-slate-400" :title="detachRequest.root.path">
+          {{ detachRequest.root.path }}
+        </p>
+      </div>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      :open="Boolean(confirmRequest)"
+      :title="confirmRequest?.title || ''"
+      :description="confirmRequest?.description || ''"
+      :confirm-label="confirmRequest?.confirmLabel || t('common.confirm')"
+      :cancel-label="t('common.cancel')"
+      :icon="confirmRequest?.icon || 'alert-circle'"
+      :tone="confirmRequest?.tone || 'danger'"
+      :busy="confirmBusy"
+      @cancel="confirmRequest = null"
+      @confirm="runConfirm"
+    />
+
+    <ConfirmDialog
+      :open="batchTagsOpen"
+      :title="t('assets.batchTagsTitle', { count: selectedAssets.length })"
+      :description="t('assets.batchTagsDesc')"
+      :confirm-label="t('assets.batchTagsConfirm')"
+      :cancel-label="t('common.cancel')"
+      icon="tag"
+      tone="default"
+      :confirm-disabled="!batchTagsInput.trim()"
+      @cancel="batchTagsOpen = false"
+      @confirm="applyBatchTags"
+    >
+      <div class="mt-3 space-y-2">
+        <input
+          v-model="batchTagsInput"
+          type="text"
+          class="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
+          :placeholder="t('assets.tagsPlaceholder')"
+          @keydown.enter.prevent="applyBatchTags"
+        />
+        <div v-if="batchTagSuggestions.length" class="flex flex-wrap gap-1.5">
+          <button
+            v-for="tag in batchTagSuggestions"
+            :key="tag"
+            type="button"
+            class="h-6 rounded-full border border-slate-200 px-2.5 text-[11px] font-medium text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:text-slate-300 dark:hover:border-blue-500/60 dark:hover:bg-blue-950/40 dark:hover:text-blue-300"
+            @click="batchTagsInput = batchTagsInput ? `${batchTagsInput.replace(/[,，]$/, '')}, ${tag}` : tag"
+          >
+            {{ tag }}
+          </button>
+        </div>
+        <p class="text-[10px] text-slate-500 dark:text-slate-400">{{ t("assets.tagsHint") }}</p>
+      </div>
+    </ConfirmDialog>
   </Teleport>
 </template>

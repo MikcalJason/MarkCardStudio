@@ -26,7 +26,14 @@ const MAX_INDEX_HTML_BYTES: usize = 1024 * 1024;
 const MAX_CONCURRENT_CONNECTIONS: u32 = 24;
 const REQUEST_HEAD_LIMIT: usize = 8 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
-const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+// A scene page is a full-bleed photo, and several of them are requested at once
+// by the phone. A short write timeout used to cut the response mid-body on a
+// slow phone link, and the phone then showed a broken image for a page that was
+// rendered correctly.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+// After the body is queued the connection is half-closed and drained until the
+// peer closes, so a slow reader never loses the tail of a page.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const ACCEPT_TICK: Duration = Duration::from_millis(100);
 
 struct ServedFile {
@@ -195,6 +202,9 @@ fn start_preview(
     let handle = spawn_session(served, index_html, PREVIEW_TTL)?;
     let page_count = handle.page_count;
     let (url, reachable) = preview_url(handle.lan_ip, handle.port, &handle.inner.token);
+    // TEMP DIAGNOSTIC: expose the session URL in the dev log while tracking down
+    // the blank page report. Remove once the investigation is closed.
+    eprintln!("markcard qr preview: {url} pages={page_count} bytes={total_bytes}");
     let lan_ip = handle.lan_ip.map(|ip| ip.to_string());
     let expires_at = handle.expires_at_unix_millis;
     *guard = Some(handle);
@@ -300,6 +310,10 @@ fn accept_loop(inner: Arc<SessionInner>, expires_at: Instant) {
 
 fn handle_connection(inner: Arc<SessionInner>, stream: TcpStream) {
     inner.active.fetch_add(1, Ordering::Relaxed);
+    // macOS hands the non-blocking flag of the listener down to accepted
+    // sockets. Without this the page body stopped at the first full send buffer
+    // (a few hundred kilobytes) and the phone kept a truncated image.
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let _ = stream.set_nodelay(true);
@@ -414,10 +428,21 @@ fn write_response(mut stream: TcpStream, status: u16, mime: &str, body: &[u8]) -
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len(),
     );
-    let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(body);
-    let _ = stream.flush();
-    let _ = stream.shutdown(Shutdown::Both);
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body)?;
+    stream.flush()?;
+    // Closing both halves here sent a reset while the tail of the body was still
+    // queued, so a phone on Wi-Fi kept only the first few hundred kilobytes of a
+    // page whose Content-Length promised the whole image. Half-close instead, and
+    // read until the peer hangs up so the send buffer is flushed before drop.
+    let _ = stream.shutdown(Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(DRAIN_TIMEOUT));
+    let mut sink = [0u8; 1024];
+    while let Ok(read) = stream.read(&mut sink) {
+        if read == 0 {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -561,6 +586,29 @@ mod tests {
         assert!(http_get(handle.port, "/").0.starts_with("HTTP/1.1 404"));
 
         assert!(!handle.inner.shutdown.load(Ordering::Relaxed));
+        drop(handle);
+    }
+
+    #[test]
+    fn serves_a_page_larger_than_one_socket_buffer() {
+        // A scene page is ~1 MB; the response used to stop as soon as the send
+        // buffer filled, and the phone showed a torn image for every page that
+        // did not fit. This is the regression guard for that.
+        let body: Vec<u8> = (0..1024 * 1024).map(|index| (index % 251) as u8).collect();
+        let mut files = BTreeMap::new();
+        files.insert("01.jpg".to_string(), served_file(&body));
+        let handle = spawn_session(
+            files,
+            "<html></html>".to_string(),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+
+        let (head, received) = http_get(handle.port, &format!("/{}/01.jpg", handle.inner.token));
+        assert!(head.starts_with("HTTP/1.1 200"));
+        assert!(head.contains(&format!("Content-Length: {}", body.len())));
+        assert_eq!(received.len(), body.len());
+        assert_eq!(received, body);
         drop(handle);
     }
 

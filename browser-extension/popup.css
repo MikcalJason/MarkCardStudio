@@ -1,0 +1,168 @@
+:root {
+  --line: rgba(15, 23, 42, 0.1);
+  --ink: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 360px;
+  margin: 0;
+  padding: 12px;
+  font: 12px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background: #f8fafc;
+}
+
+h1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+h1 img {
+  border-radius: 5px;
+  flex: 0 0 auto;
+}
+
+.card {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  margin-bottom: 10px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.label {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.value {
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 0;
+}
+
+.summary div {
+  display: flex;
+  gap: 8px;
+}
+
+.summary dt {
+  flex: 0 0 34px;
+  color: var(--muted);
+}
+
+.summary dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+button {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+button.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button.ghost {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+.notice {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: var(--muted);
+}
+
+.notice.warn {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.notice.bad {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.steps {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.steps li {
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  word-break: break-all;
+}
+
+.steps li.ok::before {
+  content: "✓ ";
+  color: #15803d;
+}
+
+.steps li.fail::before {
+  content: "✕ ";
+  color: #b91c1c;
+}
+
+.foot {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.hidden {
+  display: none;
+}

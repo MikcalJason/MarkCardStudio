@@ -14,219 +14,147 @@
 // - `cover`: fills the quad and crops, for flat prints already close to 3:4.
 // Every quad must hug the blank screen or sheet in the photo: the compositor can
 // only paint the calibrated area, so a loose quad leaves a ring of the photo's
-// blank plate around the card.
+// blank plate around the card. `imageVersion` exists because stored corner
+// corrections are validated against the photo they were made for: bump it
+// whenever a scene is re-generated at the same `image` path, and only then —
+// corrections for that scene are dropped as stale offsets.
 export const SCENE_MOCKUP_OUTPUT = { width: 1536, height: 2048 };
+
+// A gallery scene page is a full-bleed scene photo, so the card inside it only
+// gets the pixels its calibrated quad covers — often a third to half of the
+// frame. Rendering that page at the platform canvas minifies the card and its
+// type turns to mush, so the page canvas is derived from the quad instead: the
+// frame is made wide enough for the card to keep its own pixel width, clamped
+// so one scene can never ask for an absurd canvas. Export, scan-to-preview, and
+// the gallery composite all read this helper, so they cannot drift apart.
+export const SCENE_PAGE_MIN_LONG_SIDE = 2048;
+export const SCENE_PAGE_MAX_LONG_SIDE = 2880;
+
+function quadWidthFraction(quad) {
+  if (!quad?.tl || !quad?.tr || !quad?.bl || !quad?.br) return 0;
+  const span = (from, to) => Math.hypot(to[0] - from[0], to[1] - from[1]);
+  const width = (span(quad.tl, quad.tr) + span(quad.bl, quad.br)) / 2;
+  // A quad narrower than this is a calibration accident, not a surface.
+  return width < 0.08 ? 0 : Math.min(1, width);
+}
+
+export function scenePageSize(width, height, quad = null, cardWidth = 0) {
+  const platformWidth = Number(width) || 1080;
+  const platformHeight = Number(height) || 1440;
+  const platformLong = Math.max(platformWidth, platformHeight);
+  const card = Number(cardWidth) || platformWidth;
+  const fraction = quadWidthFraction(quad);
+
+  // Quad x is normalized to the photo, and a 3:4 photo fills a 3:4 frame, so the
+  // card's share of the frame is the quad's own width fraction.
+  let frameWidth = fraction ? card / fraction : platformWidth;
+  let frameHeight = frameWidth * (platformHeight / platformWidth);
+  const frameLong = Math.max(frameWidth, frameHeight);
+  const targetLong = Math.min(
+    SCENE_PAGE_MAX_LONG_SIDE,
+    Math.max(SCENE_PAGE_MIN_LONG_SIDE, frameLong),
+  );
+  const scale = frameLong > 0 ? targetLong / frameLong : 1;
+  frameWidth *= scale;
+  frameHeight *= scale;
+
+  return {
+    width: Math.max(2, Math.round(frameWidth)),
+    height: Math.max(2, Math.round(frameHeight)),
+  };
+}
 
 export const SCENE_CATEGORIES = [
   { id: "home", labelKey: "sceneMockup.categories.home" },
   { id: "study", labelKey: "sceneMockup.categories.study" },
-  { id: "travel", labelKey: "sceneMockup.categories.travel" },
   { id: "lifestyle", labelKey: "sceneMockup.categories.lifestyle" },
+  { id: "travel", labelKey: "sceneMockup.categories.travel" },
   { id: "print", labelKey: "sceneMockup.categories.print" },
 ];
 
 export const SCENE_MOCKUP_TEMPLATES = [
-  // Home
+  // HD samples: 1536×1972 photos generated straight at the scene page size, so
+  // the surface is sampled 1:1 instead of being upscaled from 768 px. The quads
+  // are a starting calibration — the picker's corner handles refine them.
   {
-    id: "bedroom",
-    category: "home",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.bedroom",
-    image: "/mockups/bedroom.jpg",
+    id: "studio-wall",
+    category: "print",
+    surface: "paper",
+    fit: "cover",
+    labelKey: "sceneMockup.templates.studioWall",
+    image: "/mockups/studio-wall.jpg",
     quad: {
-      tl: [0.2595, 0.3195],
-      tr: [0.6522, 0.3112],
-      br: [0.7719, 0.6082],
-      bl: [0.3817, 0.6786],
+      tl: [0.2656, 0.2252],
+      tr: [0.7660, 0.2190],
+      br: [0.7500, 0.7789],
+      bl: [0.2604, 0.7627],
     },
-    cornerRadius: 0.012,
-    lighting: {
-      glare: 0.05,
-      tint: { color: "255, 236, 210", opacity: 0.08 },
-      dim: 0.01,
-    },
+    cornerRadius: 0.002,
+    lighting: null,
   },
   {
-    id: "breakfast",
-    category: "home",
+    id: "tablet-stand",
+    category: "study",
     surface: "screen",
     fit: "contain",
-    labelKey: "sceneMockup.templates.breakfast",
-    image: "/mockups/breakfast.jpg",
+    labelKey: "sceneMockup.templates.tabletStand",
+    image: "/mockups/tablet-stand.jpg",
     quad: {
-      tl: [0.4122, 0.3718],
-      tr: [0.7985, 0.3794],
-      br: [0.7276, 0.6674],
-      bl: [0.3333, 0.6296],
+      tl: [0.3047, 0.2135],
+      tr: [0.6849, 0.2277],
+      br: [0.6146, 0.6978],
+      bl: [0.2318, 0.6790],
     },
-    cornerRadius: 0.011,
-    lighting: {
-      glare: 0.06,
-      tint: { color: "255, 244, 225", opacity: 0.06 },
-      dim: 0,
-    },
-  },
-  {
-    id: "livingroom",
-    category: "home",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.livingroom",
-    image: "/mockups/livingroom.jpg",
-    quad: {
-      tl: [0.3977, 0.3643],
-      tr: [0.73, 0.3642],
-      br: [0.6736, 0.7936],
-      bl: [0.3402, 0.7605],
-    },
-    cornerRadius: 0.012,
-    lighting: {
-      glare: 0.05,
-      tint: { color: "255, 224, 185", opacity: 0.08 },
-      dim: 0.02,
-    },
-  },
-  {
-    id: "kitchen",
-    category: "home",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.kitchen",
-    image: "/mockups/kitchen.jpg",
-    quad: {
-      tl: [0.3516, 0.3887],
-      tr: [0.6875, 0.3926],
-      br: [0.6536, 0.7832],
-      bl: [0.3151, 0.7578],
-    },
-    cornerRadius: 0.055,
-    lighting: {
-      glare: 0.05,
-      tint: { color: "255, 240, 214", opacity: 0.08 },
-      dim: 0.01,
-    },
-  },
-  {
-    id: "balcony",
-    category: "home",
-    surface: "screen",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.balcony",
-    image: "/mockups/balcony.jpg",
-    quad: {
-      tl: [0.3281, 0.3926],
-      tr: [0.7135, 0.3848],
-      br: [0.7578, 0.6777],
-      bl: [0.3646, 0.7012],
-    },
-    cornerRadius: 0.06,
+    cornerRadius: 0.018,
     lighting: {
       glare: 0.04,
-      tint: { color: "255, 245, 225", opacity: 0.05 },
-      dim: 0,
+      tint: { color: "255, 248, 235", opacity: 0.05 },
+      dim: 0.01,
     },
   },
-
-  // Study and work
   {
     id: "desk",
     category: "study",
     surface: "screen",
-    fit: "fill",
+    // A 16:10 pad panel, not the card's 3:4: `fill` would condense the type by
+    // ~17%, so the card keeps its proportions and the margin continues its own
+    // top and bottom rows across the rest of the screen.
+    fit: "contain",
     labelKey: "sceneMockup.templates.desk",
     image: "/mockups/desk.jpg",
+    imageVersion: 1,
     quad: {
-      tl: [0.3911, 0.2816],
-      tr: [0.7847, 0.2832],
-      br: [0.695, 0.7651],
-      bl: [0.3031, 0.6998],
-    },
-    cornerRadius: 0.05,
-    lighting: {
-      glare: 0.07,
-      tint: { color: "255, 214, 170", opacity: 0.1 },
-      dim: 0.02,
-    },
-  },
-  {
-    id: "study",
-    category: "study",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.study",
-    image: "/mockups/study.jpg",
-    quad: {
-      tl: [0.3666, 0.4134],
-      tr: [0.6736, 0.4082],
-      br: [0.7648, 0.7222],
-      bl: [0.4478, 0.7537],
+      tl: [0.2879, 0.3879],
+      tr: [0.6213, 0.3748],
+      br: [0.7254, 0.7686],
+      bl: [0.3815, 0.7995],
     },
     cornerRadius: 0.04,
     lighting: {
       glare: 0.05,
-      tint: { color: "255, 230, 200", opacity: 0.08 },
-      dim: 0.02,
+      tint: { color: "255, 240, 220", opacity: 0.07 },
+      dim: 0.01,
     },
   },
   {
     id: "library",
     category: "study",
     surface: "screen",
-    fit: "fill",
+    fit: "contain",
     labelKey: "sceneMockup.templates.library",
     image: "/mockups/library.jpg",
+    imageVersion: 1,
     quad: {
-      tl: [0.3021, 0.3262],
-      tr: [0.6172, 0.3418],
-      br: [0.6953, 0.707],
-      bl: [0.3672, 0.7285],
+      tl: [0.3171, 0.3098],
+      tr: [0.7699, 0.3061],
+      br: [0.7366, 0.8631],
+      bl: [0.2525, 0.8396],
     },
-    cornerRadius: 0.05,
+    cornerRadius: 0.04,
     lighting: {
       glare: 0.04,
-      tint: { color: "255, 240, 215", opacity: 0.07 },
+      tint: { color: "255, 232, 200", opacity: 0.09 },
       dim: 0.02,
-    },
-  },
-  {
-    id: "office",
-    category: "study",
-    surface: "screen",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.office",
-    image: "/mockups/office.jpg",
-    quad: {
-      tl: [0.3049, 0.3311],
-      tr: [0.8086, 0.3037],
-      br: [0.7096, 0.6924],
-      bl: [0.2214, 0.6396],
-    },
-    cornerRadius: 0.05,
-    lighting: {
-      glare: 0.03,
-      tint: { color: "225, 238, 250", opacity: 0.04 },
-      dim: 0,
-    },
-  },
-  {
-    id: "meeting",
-    category: "study",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.meeting",
-    image: "/mockups/meeting.jpg",
-    quad: {
-      tl: [0.3542, 0.2988],
-      tr: [0.724, 0.2988],
-      br: [0.6302, 0.7988],
-      bl: [0.3073, 0.7109],
-    },
-    cornerRadius: 0.05,
-    lighting: {
-      glare: 0.04,
-      tint: { color: "230, 240, 255", opacity: 0.05 },
-      dim: 0.01,
     },
   },
   {
@@ -236,159 +164,45 @@ export const SCENE_MOCKUP_TEMPLATES = [
     fit: "contain",
     labelKey: "sceneMockup.templates.classroom",
     image: "/mockups/classroom.jpg",
+    imageVersion: 1,
     quad: {
-      tl: [0.2396, 0.293],
-      tr: [0.8073, 0.2891],
-      br: [0.7813, 0.6777],
-      bl: [0.1927, 0.6465],
-    },
-    cornerRadius: 0.055,
-    lighting: {
-      glare: 0.04,
-      tint: { color: "255, 240, 220", opacity: 0.04 },
-      dim: 0,
-    },
-  },
-  {
-    id: "dorm-desk",
-    category: "study",
-    surface: "laptop",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.dormDesk",
-    image: "/mockups/dorm-desk.jpg",
-    quad: {
-      tl: [0.2292, 0.3613],
-      tr: [0.6615, 0.3789],
-      br: [0.7292, 0.6328],
-      bl: [0.2969, 0.6758],
-    },
-    cornerRadius: 0.02,
-    lighting: {
-      glare: 0.03,
-      tint: { color: "255, 226, 196", opacity: 0.04 },
-      dim: 0.02,
-    },
-  },
-  {
-    id: "teacher-desk",
-    category: "study",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.teacherDesk",
-    image: "/mockups/teacher-desk.jpg",
-    quad: {
-      tl: [0.4063, 0.3203],
-      tr: [0.724, 0.3613],
-      br: [0.6146, 0.6934],
-      bl: [0.3099, 0.6016],
-    },
-    cornerRadius: 0.055,
-    lighting: {
-      glare: 0.04,
-      tint: { color: "255, 240, 220", opacity: 0.06 },
-      dim: 0.01,
-    },
-  },
-  {
-    id: "laptop",
-    category: "study",
-    surface: "laptop",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.laptop",
-    image: "/mockups/laptop.jpg",
-    quad: {
-      tl: [0.3073, 0.3242],
-      tr: [0.8594, 0.3379],
-      br: [0.8151, 0.6445],
-      bl: [0.263, 0.6113],
-    },
-    cornerRadius: 0.02,
-    lighting: {
-      glare: 0.04,
-      tint: { color: "225, 238, 250", opacity: 0.03 },
-      dim: 0.02,
-    },
-  },
-
-  // Travel
-  {
-    id: "rail",
-    category: "travel",
-    surface: "screen",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.rail",
-    image: "/mockups/rail.jpg",
-    quad: {
-      tl: [0.4723, 0.451],
-      tr: [0.8501, 0.4603],
-      br: [0.7777, 0.7516],
-      bl: [0.3962, 0.6799],
+      tl: [0.3204, 0.3639],
+      tr: [0.6924, 0.3654],
+      br: [0.5773, 0.8507],
+      bl: [0.2045, 0.8001],
     },
     cornerRadius: 0.035,
     lighting: {
-      glare: 0.04,
-      tint: { color: "225, 238, 255", opacity: 0.06 },
-      dim: 0.01,
-    },
-  },
-  {
-    id: "beach",
-    category: "travel",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.beach",
-    image: "/mockups/beach.jpg",
-    quad: {
-      tl: [0.2907, 0.2522],
-      tr: [0.65, 0.2424],
-      br: [0.7198, 0.6678],
-      bl: [0.3555, 0.7066],
-    },
-    cornerRadius: 0.018,
-    lighting: {
       glare: 0.07,
-      tint: { color: "230, 245, 255", opacity: 0.06 },
+      tint: { color: "236, 244, 255", opacity: 0.05 },
       dim: 0,
     },
   },
+
+  // Home
   {
-    id: "hotel",
-    category: "travel",
+    id: "bedroom",
+    category: "home",
     surface: "screen",
+    // The plate in this photo is a phone screen: 442 x 1004 px, an aspect of
+    // 0.44 against the card's 0.75. `fill` would squash the type sideways and
+    // `cover` would cut ~40% of the card's width, so the card keeps its own
+    // proportions and the margin continues its top and bottom rows.
     fit: "contain",
-    labelKey: "sceneMockup.templates.hotel",
-    image: "/mockups/hotel.jpg",
+    labelKey: "sceneMockup.templates.bedroom",
+    image: "/mockups/bedroom.jpg",
+    imageVersion: 2,
     quad: {
-      tl: [0.3359, 0.418],
-      tr: [0.6927, 0.4043],
-      br: [0.7526, 0.6563],
-      bl: [0.388, 0.6973],
+      tl: [0.3583, 0.2662],
+      tr: [0.6458, 0.2662],
+      br: [0.6458, 0.7760],
+      bl: [0.3583, 0.7760],
     },
-    cornerRadius: 0.06,
-    lighting: {
-      glare: 0.04,
-      tint: { color: "255, 238, 215", opacity: 0.06 },
-      dim: 0.02,
-    },
-  },
-  {
-    id: "airplane",
-    category: "travel",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.airplane",
-    image: "/mockups/airplane.jpg",
-    quad: {
-      tl: [0.3359, 0.2129],
-      tr: [0.6641, 0.1973],
-      br: [0.6901, 0.6211],
-      bl: [0.3177, 0.6191],
-    },
-    cornerRadius: 0.05,
+    cornerRadius: 0.012,
     lighting: {
       glare: 0.05,
-      tint: { color: "220, 235, 255", opacity: 0.05 },
-      dim: 0.02,
+      tint: { color: "255, 236, 210", opacity: 0.08 },
+      dim: 0.01,
     },
   },
 
@@ -400,11 +214,12 @@ export const SCENE_MOCKUP_TEMPLATES = [
     fit: "fill",
     labelKey: "sceneMockup.templates.cafe",
     image: "/mockups/cafe.jpg",
+    imageVersion: 2,
     quad: {
-      tl: [0.3488, 0.308],
-      tr: [0.7013, 0.3004],
-      br: [0.6227, 0.7508],
-      bl: [0.2639, 0.6992],
+      tl: [0.2458, 0.2013],
+      tr: [0.8167, 0.2013],
+      br: [0.8167, 0.7922],
+      bl: [0.2458, 0.7922],
     },
     cornerRadius: 0.05,
     lighting: {
@@ -413,120 +228,31 @@ export const SCENE_MOCKUP_TEMPLATES = [
       dim: 0.02,
     },
   },
+
+  // On the road
   {
-    id: "bookstore",
-    category: "lifestyle",
+    id: "rail",
+    category: "travel",
     surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.bookstore",
-    image: "/mockups/bookstore.jpg",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.rail",
+    image: "/mockups/rail.jpg",
+    imageVersion: 1,
     quad: {
-      tl: [0.2682, 0.3027],
-      tr: [0.6953, 0.2832],
-      br: [0.8307, 0.7168],
-      bl: [0.4036, 0.7734],
+      tl: [0.3766, 0.3044],
+      tr: [0.7497, 0.3018],
+      br: [0.6931, 0.8202],
+      bl: [0.3015, 0.7834],
     },
-    cornerRadius: 0.05,
+    cornerRadius: 0.04,
     lighting: {
-      glare: 0.04,
-      tint: { color: "255, 230, 200", opacity: 0.06 },
+      glare: 0.09,
+      tint: { color: "240, 248, 255", opacity: 0.06 },
       dim: 0.01,
-    },
-  },
-  {
-    id: "outdoor",
-    category: "lifestyle",
-    surface: "screen",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.outdoor",
-    image: "/mockups/outdoor.jpg",
-    quad: {
-      tl: [0.1735, 0.3836],
-      tr: [0.6256, 0.3155],
-      br: [0.752, 0.6307],
-      bl: [0.3012, 0.7335],
-    },
-    cornerRadius: 0.03,
-    lighting: {
-      glare: 0.07,
-      tint: { color: "255, 240, 210", opacity: 0.1 },
-      dim: 0,
-    },
-  },
-  {
-    id: "camping",
-    category: "lifestyle",
-    surface: "screen",
-    fit: "fill",
-    labelKey: "sceneMockup.templates.camping",
-    image: "/mockups/camping.jpg",
-    quad: {
-      tl: [0.2496, 0.278],
-      tr: [0.6249, 0.2843],
-      br: [0.7605, 0.7113],
-      bl: [0.3651, 0.7537],
-    },
-    cornerRadius: 0.06,
-    lighting: {
-      glare: 0.05,
-      tint: { color: "255, 236, 200", opacity: 0.08 },
-      dim: 0,
-    },
-  },
-  {
-    id: "garden",
-    category: "lifestyle",
-    surface: "screen",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.garden",
-    image: "/mockups/garden.jpg",
-    quad: {
-      tl: [0.2786, 0.3047],
-      tr: [0.776, 0.3281],
-      br: [0.6875, 0.6895],
-      bl: [0.1745, 0.6367],
-    },
-    cornerRadius: 0.06,
-    lighting: {
-      glare: 0.06,
-      tint: { color: "255, 240, 210", opacity: 0.08 },
-      dim: 0,
     },
   },
 
   // Printed paper, pages, and wall art
-  {
-    id: "print-desk",
-    category: "print",
-    surface: "paper",
-    fit: "cover",
-    labelKey: "sceneMockup.templates.printDesk",
-    image: "/mockups/print-desk.jpg",
-    quad: {
-      tl: [0.2552, 0.2656],
-      tr: [0.6979, 0.2383],
-      br: [0.7865, 0.7559],
-      bl: [0.2604, 0.7969],
-    },
-    cornerRadius: 0.004,
-    lighting: null,
-  },
-  {
-    id: "corkboard",
-    category: "print",
-    surface: "paper",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.corkboard",
-    image: "/mockups/corkboard.jpg",
-    quad: {
-      tl: [0.3021, 0.1719],
-      tr: [0.7943, 0.1875],
-      br: [0.8073, 0.8457],
-      bl: [0.2448, 0.8516],
-    },
-    cornerRadius: 0.006,
-    lighting: null,
-  },
   {
     id: "poster-wall",
     category: "print",
@@ -536,62 +262,189 @@ export const SCENE_MOCKUP_TEMPLATES = [
     fit: "contain",
     labelKey: "sceneMockup.templates.posterWall",
     image: "/mockups/poster-wall.jpg",
+    imageVersion: 2,
     quad: {
-      tl: [0.3125, 0.1816],
-      tr: [0.6979, 0.2031],
-      br: [0.6966, 0.5322],
-      bl: [0.319, 0.5352],
+      tl: [0.2743, 0.2516],
+      tr: [0.7272, 0.2509],
+      br: [0.7230, 0.7328],
+      bl: [0.2711, 0.7306],
     },
     cornerRadius: 0.003,
-    lighting: null,
-  },
-  {
-    id: "magazine",
-    category: "print",
-    surface: "paper",
-    fit: "contain",
-    labelKey: "sceneMockup.templates.magazine",
-    image: "/mockups/magazine.jpg",
-    quad: {
-      tl: [0.5521, 0.2324],
-      tr: [0.9401, 0.2266],
-      br: [0.9479, 0.748],
-      bl: [0.5599, 0.748],
-    },
-    cornerRadius: 0.006,
     lighting: null,
   },
   {
     id: "notebook",
     category: "print",
     surface: "paper",
-    fit: "contain",
+    // The sheet is 0.80 against the card's 0.75, so filling it only costs a hair
+    // over each side edge — a print should not float in a bordered margin.
+    fit: "cover",
     labelKey: "sceneMockup.templates.notebook",
     image: "/mockups/notebook.jpg",
+    imageVersion: 1,
     quad: {
-      tl: [0.5859, 0.3926],
-      tr: [0.9167, 0.4902],
-      br: [0.8333, 0.7734],
-      bl: [0.5339, 0.7109],
+      tl: [0.1556, 0.2957],
+      tr: [0.7789, 0.2093],
+      br: [0.8859, 0.8896],
+      bl: [0.1874, 0.9238],
     },
-    cornerRadius: 0.014,
+    cornerRadius: 0.004,
     lighting: null,
   },
+
+  // Camping and outdoors (portrait tablet, blank screen centred, unobstructed).
   {
-    id: "gallery",
-    category: "print",
-    surface: "paper",
-    fit: "cover",
-    labelKey: "sceneMockup.templates.gallery",
-    image: "/mockups/gallery.jpg",
+    id: "camping",
+    category: "lifestyle",
+    surface: "screen",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.camping",
+    image: "/mockups/camping.jpg",
+    imageVersion: 1,
     quad: {
-      tl: [0.3568, 0.3145],
-      tr: [0.6875, 0.2949],
-      br: [0.6875, 0.6348],
-      bl: [0.3516, 0.6348],
+      tl: [0.360, 0.428],
+      tr: [0.650, 0.424],
+      br: [0.656, 0.736],
+      bl: [0.352, 0.732],
     },
-    cornerRadius: 0.002,
-    lighting: null,
+    cornerRadius: 0.04,
+    lighting: {
+      glare: 0.06,
+      tint: { color: "255, 232, 200", opacity: 0.08 },
+      dim: 0.01,
+    },
+  },
+  {
+    id: "campsite",
+    category: "lifestyle",
+    surface: "screen",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.campsite",
+    image: "/mockups/campsite.jpg",
+    imageVersion: 1,
+    quad: {
+      tl: [0.348, 0.452],
+      tr: [0.652, 0.452],
+      br: [0.652, 0.812],
+      bl: [0.348, 0.812],
+    },
+    cornerRadius: 0.04,
+    lighting: {
+      glare: 0.05,
+      tint: { color: "255, 230, 198", opacity: 0.08 },
+      dim: 0.01,
+    },
+  },
+
+  // Study and office (landscape tablet / laptop, plate is wider than 3:4).
+  {
+    id: "office",
+    category: "study",
+    surface: "screen",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.office",
+    image: "/mockups/office.jpg",
+    imageVersion: 1,
+    quad: {
+      tl: [0.245, 0.415],
+      tr: [0.795, 0.405],
+      br: [0.812, 0.720],
+      bl: [0.205, 0.735],
+    },
+    cornerRadius: 0.035,
+    lighting: {
+      glare: 0.05,
+      tint: { color: "236, 244, 255", opacity: 0.05 },
+      dim: 0,
+    },
+  },
+  {
+    id: "workspace",
+    category: "study",
+    surface: "screen",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.workspace",
+    image: "/mockups/workspace.jpg",
+    imageVersion: 1,
+    quad: {
+      tl: [0.262, 0.430],
+      tr: [0.748, 0.418],
+      br: [0.760, 0.700],
+      bl: [0.250, 0.712],
+    },
+    cornerRadius: 0.035,
+    lighting: {
+      glare: 0.05,
+      tint: { color: "255, 240, 220", opacity: 0.06 },
+      dim: 0.01,
+    },
+  },
+  {
+    id: "laptop",
+    category: "study",
+    surface: "laptop",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.laptop",
+    image: "/mockups/laptop.jpg",
+    imageVersion: 1,
+    quad: {
+      tl: [0.155, 0.325],
+      tr: [0.855, 0.320],
+      br: [0.860, 0.675],
+      bl: [0.150, 0.680],
+    },
+    cornerRadius: 0.012,
+    lighting: {
+      glare: 0.05,
+      tint: { color: "255, 236, 210", opacity: 0.07 },
+      dim: 0.01,
+    },
+  },
+
+  // Lifestyle with a person seated behind the device; hands stay off the screen.
+  {
+    id: "cafe-person",
+    category: "lifestyle",
+    surface: "screen",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.cafePerson",
+    image: "/mockups/cafe-person.jpg",
+    imageVersion: 1,
+    quad: {
+      tl: [0.248, 0.300],
+      tr: [0.730, 0.300],
+      br: [0.735, 0.772],
+      bl: [0.243, 0.772],
+    },
+    cornerRadius: 0.04,
+    lighting: {
+      glare: 0.06,
+      tint: { color: "255, 224, 190", opacity: 0.08 },
+      dim: 0.02,
+    },
+  },
+
+  // Travel: portrait tablet on a beach blanket, sea and sky behind.
+  {
+    id: "beach",
+    category: "travel",
+    surface: "screen",
+    fit: "contain",
+    labelKey: "sceneMockup.templates.beach",
+    image: "/mockups/beach.jpg",
+    imageVersion: 1,
+    quad: {
+      tl: [0.228, 0.172],
+      tr: [0.792, 0.168],
+      br: [0.798, 0.782],
+      bl: [0.222, 0.786],
+    },
+    cornerRadius: 0.04,
+    lighting: {
+      glare: 0.08,
+      tint: { color: "240, 248, 255", opacity: 0.06 },
+      dim: 0,
+    },
   },
 ];
 

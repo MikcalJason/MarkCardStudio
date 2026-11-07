@@ -1,6 +1,8 @@
+import { version } from "../../package.json";
+
 export const APP_INFO = {
   name: "MarkCard Studio",
-  version: "0.1.5",
+  version,
   license: "GNU GPL v3.0",
   author: {
     name: "xiaobin",

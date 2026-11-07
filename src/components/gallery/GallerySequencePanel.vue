@@ -22,6 +22,12 @@ const props = defineProps({
     type: Function,
     required: true,
   },
+  // Gallery images only persist an assetId, so the original file name is read
+  // back from the asset library instead of being copied into the work.
+  getAssetName: {
+    type: Function,
+    default: null,
+  },
   isDesktop: {
     type: Boolean,
     default: false,
@@ -40,22 +46,57 @@ const emit = defineEmits([
   "add-images",
   "remove-image",
   "move-image",
-  "set-cover",
+  "sort-images",
   "select-image",
   "open-cover-studio",
   "remove-cover",
   "calibrate-image",
 ]);
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const draggingIndex = ref(-1);
 const dragOverIndex = ref(-1);
 
 const images = computed(() => props.work?.images || []);
 const coverDesign = computed(() => props.work?.coverDesign || null);
-const coverAssetId = computed(() =>
-  coverDesign.value ? "" : props.work?.cover?.assetId || images.value[0]?.assetId || "",
-);
+
+function imageLabel(image) {
+  const name = props.getAssetName?.(image.assetId) || "";
+  if (name) return name;
+  return image.assetId.replace(/^sha256:/, "").slice(-8);
+}
+
+// Sorting consumes the same label each row shows, so the order always matches
+// what the user read. Ties keep their current order because sort is stable.
+function compareLabels(left, right) {
+  return String(left).localeCompare(String(right), locale.value, {
+    numeric: true,
+    caseFirst: "lower",
+  });
+}
+
+function idsSortedByLabel(descending) {
+  const sign = descending ? -1 : 1;
+  const keyed = images.value.map((image) => ({
+    id: image.id,
+    label: imageLabel(image),
+  }));
+  return keyed
+    .slice()
+    .sort((left, right) => sign * compareLabels(left.label, right.label))
+    .map((item) => item.id);
+}
+
+const ascIds = computed(() => idsSortedByLabel(false));
+const descIds = computed(() => idsSortedByLabel(true));
+
+const activeSort = computed(() => {
+  if (images.value.length < 2) return "";
+  const current = images.value.map((image) => image.id).join("|");
+  if (current === ascIds.value.join("|")) return "asc";
+  if (current === descIds.value.join("|")) return "desc";
+  return "";
+});
 
 function onDragStart(event, index) {
   draggingIndex.value = index;
@@ -100,14 +141,50 @@ function onDragEnd() {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 text-xs font-bold text-white hover:bg-blue-700"
-          @click="$emit('add-images')"
-        >
-          <AppIcon name="image-plus" :size="14" />
-          <span class="hidden sm:inline">{{ t("gallery.add") }}</span>
-        </button>
+        <div class="flex shrink-0 items-center gap-1">
+          <!-- Name sorting is a one-off reorder, not a view mode: the sequence is
+               what publishes, so the new order has to be the work's own order. -->
+          <button
+            type="button"
+            class="grid h-8 w-8 place-items-center rounded-lg border transition disabled:opacity-40"
+            :class="
+              activeSort === 'asc'
+                ? 'border-blue-400 bg-blue-50 text-blue-600 dark:border-blue-500/70 dark:bg-blue-950/50 dark:text-blue-300'
+                : 'border-slate-200/90 text-slate-500 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700/80 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'
+            "
+            :disabled="images.length < 2"
+            :aria-pressed="activeSort === 'asc'"
+            :aria-label="t('gallery.sortByNameAsc')"
+            :title="t('gallery.sortByNameAsc')"
+            @click="$emit('sort-images', ascIds)"
+          >
+            <AppIcon name="arrow-up-narrow-wide" :size="14" />
+          </button>
+          <button
+            type="button"
+            class="grid h-8 w-8 place-items-center rounded-lg border transition disabled:opacity-40"
+            :class="
+              activeSort === 'desc'
+                ? 'border-blue-400 bg-blue-50 text-blue-600 dark:border-blue-500/70 dark:bg-blue-950/50 dark:text-blue-300'
+                : 'border-slate-200/90 text-slate-500 hover:bg-slate-50 hover:text-slate-700 dark:border-slate-700/80 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'
+            "
+            :disabled="images.length < 2"
+            :aria-pressed="activeSort === 'desc'"
+            :aria-label="t('gallery.sortByNameDesc')"
+            :title="t('gallery.sortByNameDesc')"
+            @click="$emit('sort-images', descIds)"
+          >
+            <AppIcon name="arrow-down-wide-narrow" :size="14" />
+          </button>
+          <button
+            type="button"
+            class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 text-xs font-bold text-white hover:bg-blue-700"
+            @click="$emit('add-images')"
+          >
+            <AppIcon name="image-plus" :size="14" />
+            <span class="hidden sm:inline">{{ t("gallery.add") }}</span>
+          </button>
+        </div>
       </div>
       <p class="mt-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">
         {{ t("gallery.sequenceHint") }}
@@ -218,31 +295,18 @@ function onDragEnd() {
                 <AppIcon name="tablet" :size="10" class="inline-block align-[-1px]" />
               </span>
               <span
-                v-if="coverAssetId === image.assetId"
-                class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:bg-amber-950/50 dark:text-amber-300"
-              >
-                {{ t("gallery.cover") }}
-              </span>
-              <span
                 v-if="image.overlay?.items?.length"
                 class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-400"
                 :title="t('overlay.title')"
               >
                 <AppIcon name="sparkles" :size="10" class="inline-block align-[-1px]" />
               </span>
-              <span class="truncate text-[10px] text-slate-500 dark:text-slate-400">
-                {{ image.assetId.slice(-8) }}
-              </span>
-              <button
-                v-if="!coverDesign"
-                type="button"
-                class="ml-auto grid h-6 w-6 shrink-0 place-items-center rounded text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                :title="t('gallery.setCover')"
-                :aria-label="t('gallery.setCover')"
-                @click.stop="$emit('set-cover', image)"
+              <span
+                class="truncate text-[10px] text-slate-500 dark:text-slate-400"
+                :title="imageLabel(image)"
               >
-                <AppIcon name="check" :size="12" />
-              </button>
+                {{ imageLabel(image) }}
+              </span>
             </div>
             <div class="mt-1 flex items-center justify-end gap-0.5">
               <!-- Scene corners are corrected per image: a card that sits badly

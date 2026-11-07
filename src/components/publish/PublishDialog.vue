@@ -7,6 +7,8 @@ import AppIcon from "../AppIcon.vue";
 import PublishChecklist from "./PublishChecklist.vue";
 import { TAG_SUGGESTIONS, countCodePoints } from "../../config/publishChannels.js";
 import { draftApiState } from "../../storage/channelPermissions.js";
+import { openExternalUrl } from "../../utils/externalUrl.js";
+import { bridgeMinutesLeft, withBridgeHash } from "../../utils/publishBridge.js";
 
 const props = defineProps({
   open: {
@@ -24,10 +26,6 @@ const props = defineProps({
   history: {
     type: Object,
     required: true,
-  },
-  exportPath: {
-    type: String,
-    default: "",
   },
 });
 
@@ -71,6 +69,14 @@ const readiness = computed(() => props.publish.readiness.value);
 const pageOptions = computed(() => props.publish.availablePages.value);
 const isGenerating = computed(() => props.bundle.isGenerating.value);
 const progress = computed(() => props.bundle.progress.value);
+// Assisted channels expose the loopback bridge the Chrome extension reads; the
+// hash carried into the creator page is how the two meet.
+const bridgeInfo = computed(() => props.bundle.bridge?.value || null);
+const bridgeMinutes = computed(() => bridgeMinutesLeft(bridgeInfo.value?.expiresAt));
+const bridgeError = computed(() => props.bundle.bridgeError?.value || "");
+// Desktop writes every bundle into the app's own publish folder, so the path is
+// shown as a fact instead of being asked for.
+const bundleRoot = computed(() => props.bundle.bundleRootPath?.value || "");
 const contentHash = computed(() => props.publish.contentHash.value);
 const canWriteBundle = computed(() => props.bundle.supportsBundle());
 const selectedIndexes = computed(() => plan.value.images.map((image) => image.pageIndex));
@@ -123,7 +129,10 @@ const resultActions = computed(() => [
   {
     key: "openCreator",
     icon: "external-link",
-    labelKey: "publishFlow.actions.openCreator",
+    labelKey:
+      channel.value.mode === "assist"
+        ? "publishFlow.actions.openCreatorAssisted"
+        : "publishFlow.actions.openCreator",
     handler: openCreatorPlatform,
     copied: false,
     hidden: !channel.value.externalUrl,
@@ -161,6 +170,9 @@ watch(
     }
     step.value = 0;
     syncDrafts();
+    // Resolve the managed bundle folder up front so the publish step can show
+    // where the files will land before the user commits to generating.
+    if (isTauri) props.bundle.ensureBundleRoot?.().catch(() => {});
   },
 );
 
@@ -294,14 +306,38 @@ function copyAll() {
 async function openCreatorPlatform() {
   const url = channel.value.externalUrl;
   if (!url) return;
-  const opener = window.__TAURI_INTERNALS__
-    ? (await import("@tauri-apps/plugin-opener")).openUrl
-    : null;
-  if (opener) {
-    await opener(url);
-    return;
+  // Assisted channels carry the finished bundle's loopback bridge in the URL
+  // fragment, so the extension fills the page without a folder picker.
+  let bridgeUrl = "";
+  if (channel.value.mode === "assist") {
+    const bundlePath = result.value?.bundlePath || props.bundle.lastBundlePath.value;
+    if (bundlePath) {
+      const started = await props.bundle.ensureBridge(bundlePath).catch(() => null);
+      // A bundle built for another channel would be refused by the extension
+      // anyway; never hand it over in the first place.
+      if (started?.url && (!started.channelId || started.channelId === channel.value.id)) {
+        bridgeUrl = started.url;
+      }
+    }
   }
-  window.open(url, "_blank", "noopener,noreferrer");
+  const target = bridgeUrl ? withBridgeHash(url, bridgeUrl) : url;
+  // The Xiaohongshu studio only works with the fill extension, which is Chrome
+  // only, so those channels ask the shell for Chrome first.
+  await openExternalUrl(target, { preferChrome: Boolean(channel.value.openInChrome) });
+}
+
+/**
+ * One click = generate the bundle, start the bridge, and open the creator page
+ * with the bridge fragment the extension follows. It never publishes: the
+ * platform's own 发布 button stays the user's decision.
+ */
+async function handleOneClickPublish() {
+  if (isGenerating.value) return;
+  if (!result.value) {
+    await handleGenerate();
+    if (!result.value) return;
+  }
+  await openCreatorPlatform();
 }
 
 async function handleGenerate() {
@@ -344,6 +380,15 @@ function cancelGenerate() {
 async function handleOpenFolder() {
   try {
     await props.bundle.openBundleFolder(result.value?.bundlePath || props.bundle.lastBundlePath.value);
+  } catch (error) {
+    errorMessage.value = error?.message || String(error);
+  }
+}
+
+async function handleOpenRoot() {
+  if (!bundleRoot.value) return;
+  try {
+    await props.bundle.openBundleFolder(bundleRoot.value);
   } catch (error) {
     errorMessage.value = error?.message || String(error);
   }
@@ -417,12 +462,33 @@ async function handlePushDraft() {
   }
 }
 
-function applyFix(issue) {  if (issue?.action?.type === "switch-canvas") {
+function truncateCodePoints(text, max) {
+  const points = Array.from(text);
+  return points.length > max ? points.slice(0, max).join("") : text;
+}
+
+function applyFix(issue) {
+  if (issue?.action?.type === "switch-canvas") {
     emit("switch-canvas", channel.value);
     return;
   }
   if (issue?.action?.type === "goto-create") {
     emit("goto-create");
+    return;
+  }
+  if (issue?.action?.type === "truncate-title") {
+    titleDraft.value = truncateCodePoints(titleDraft.value, titleLimit.value);
+    commitTitle();
+    return;
+  }
+  if (issue?.action?.type === "truncate-body") {
+    bodyDraft.value = truncateCodePoints(bodyDraft.value, bodyLimit.value);
+    commitBody();
+    return;
+  }
+  if (issue?.action?.type === "trim-tags") {
+    tagsDraft.value = tagDraftText(tagList.value.slice(0, tagLimit.value));
+    commitTags();
   }
 }
 
@@ -624,7 +690,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="min-w-0 rounded-xl border border-slate-200/90 p-3 dark:border-slate-700/80">
+            <div class="flex min-w-0 flex-col rounded-xl border border-slate-200/90 p-3 dark:border-slate-700/80">
               <div class="flex items-center justify-between">
                 <h3 class="text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                   {{ t("publishFlow.images.section") }}
@@ -637,7 +703,7 @@ onBeforeUnmount(() => {
                 {{ t("publishFlow.images.orderHint") }}
               </p>
 
-              <ol class="mt-2 max-h-[min(38vh,380px)] space-y-1.5 overflow-y-auto pr-0.5">
+              <ol class="mt-2 max-h-[min(58vh,560px)] min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-0.5">
                 <li
                   v-for="(image, position) in plan.images"
                   :key="image.pageIndex"
@@ -803,6 +869,23 @@ onBeforeUnmount(() => {
 
           <section v-else class="space-y-3">
             <div
+              v-if="isTauri && bundleRoot"
+              class="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200/90 bg-slate-50/70 px-3 py-2 dark:border-slate-700/80 dark:bg-slate-800/50"
+            >
+              <AppIcon name="folder-open" :size="14" class="shrink-0 text-slate-400" />
+              <p class="min-w-0 flex-1 break-all text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                {{ t("publishFlow.bundleRootHint", { path: bundleRoot }) }}
+              </p>
+              <button
+                type="button"
+                class="shrink-0 rounded-md border border-slate-200/90 px-2 py-1 text-[11px] font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:text-slate-300"
+                @click="handleOpenRoot"
+              >
+                {{ t("publishFlow.actions.openFolder") }}
+              </button>
+            </div>
+
+            <div
               v-if="!result && !isGenerating"
               class="rounded-xl border border-dashed border-slate-200/90 p-4 text-center dark:border-slate-700/80"
             >
@@ -812,6 +895,22 @@ onBeforeUnmount(() => {
               </p>
               <p class="mx-auto mt-2 max-w-md rounded-lg bg-slate-50 px-3 py-2 text-left text-[11px] leading-5 text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
                 {{ t("publishFlow.bundleExplainer") }}
+              </p>
+              <button
+                v-if="channel.mode === 'assist' && canWriteBundle && isTauri"
+                type="button"
+                class="mt-3 inline-flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-4 text-[12px] font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="isGenerating || preflight.counts.blocker > 0"
+                @click="handleOneClickPublish"
+              >
+                <AppIcon name="upload" :size="14" />
+                {{ t("publishFlow.actions.oneClickCreator") }}
+              </button>
+              <p
+                v-if="channel.mode === 'assist'"
+                class="mx-auto mt-2 max-w-md text-[11px] leading-5 text-slate-500 dark:text-slate-400"
+              >
+                {{ t("publishFlow.bridge.oneClickHint") }}
               </p>
               <p v-if="!preflight.ready" class="mt-2 text-[12px] font-semibold text-rose-600 dark:text-rose-300">
                 {{ t("publishFlow.blockedHint") }}
@@ -845,9 +944,28 @@ onBeforeUnmount(() => {
                   {{ t("publishFlow.bundleReady", { count: result.imageCount }) }}
                 </div>
                 <p class="mt-1 break-all text-[11px] leading-5 text-emerald-700/80 dark:text-emerald-300/80">
-                  {{ result.bundlePath || t("publishFlow.bundleFolderNamed", { name: exportPath }) }}
+                  {{ result.bundlePath || t("publishFlow.bundleFolderNamed", { name: bundleRoot }) }}
                 </p>
               </div>
+
+              <div
+                v-if="bridgeInfo"
+                class="rounded-xl border border-blue-200/80 bg-blue-50/70 p-3 dark:border-blue-900/70 dark:bg-blue-950/40"
+              >
+                <div class="flex items-center gap-2 text-[12px] font-bold text-blue-700 dark:text-blue-300">
+                  <AppIcon name="upload" :size="15" />
+                  {{ t("publishFlow.bridge.ready") }}
+                </div>
+                <p class="mt-1 text-[11px] leading-5 text-blue-700/80 dark:text-blue-300/80">
+                  {{ t("publishFlow.bridge.readyHint", { minutes: bridgeMinutes }) }}
+                </p>
+              </div>
+              <p
+                v-else-if="bridgeError"
+                class="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+              >
+                {{ t("publishFlow.bridge.failed", { error: bridgeError }) }}
+              </p>
 
               <div
                 v-if="canPushDraft"

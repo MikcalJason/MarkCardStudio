@@ -28,18 +28,32 @@ export function runPublishPreflight({ channel, plan, context = {} } = {}) {
   }
   if (titleLength > channel.limits.title.max) {
     issues.push(
-      issue("title-too-long", "blocker", "content", "publishFlow.checks.titleTooLong", {
-        max: channel.limits.title.max,
-        actual: titleLength,
-      }),
+      issue(
+        "title-too-long",
+        "blocker",
+        "content",
+        "publishFlow.checks.titleTooLong",
+        {
+          max: channel.limits.title.max,
+          actual: titleLength,
+        },
+        { type: "truncate-title", labelKey: "publishFlow.checklist.fixTruncate" },
+      ),
     );
   }
   if (bodyLength > channel.limits.body.max) {
     issues.push(
-      issue("body-too-long", "blocker", "content", "publishFlow.checks.bodyTooLong", {
-        max: channel.limits.body.max,
-        actual: bodyLength,
-      }),
+      issue(
+        "body-too-long",
+        "blocker",
+        "content",
+        "publishFlow.checks.bodyTooLong",
+        {
+          max: channel.limits.body.max,
+          actual: bodyLength,
+        },
+        { type: "truncate-body", labelKey: "publishFlow.checklist.fixTruncate" },
+      ),
     );
   } else if (!bodyLength) {
     issues.push(issue("body-empty", "info", "content", "publishFlow.checks.bodyEmpty"));
@@ -79,10 +93,17 @@ export function runPublishPreflight({ channel, plan, context = {} } = {}) {
     issues.push(issue("tags-unsupported", "info", "content", "publishFlow.checks.tagsUnsupported"));
   } else if (channel.limits.tags.max > 0 && tags.length > channel.limits.tags.max) {
     issues.push(
-      issue("tags-too-many", "warning", "content", "publishFlow.checks.tagsTooMany", {
-        max: channel.limits.tags.max,
-        actual: tags.length,
-      }),
+      issue(
+        "tags-too-many",
+        "warning",
+        "content",
+        "publishFlow.checks.tagsTooMany",
+        {
+          max: channel.limits.tags.max,
+          actual: tags.length,
+        },
+        { type: "trim-tags", labelKey: "publishFlow.checklist.fixTrimTags" },
+      ),
     );
   }
 

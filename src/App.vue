@@ -1,7 +1,7 @@
 <script setup>
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import AppCloseConfirmDialog from "./components/AppCloseConfirmDialog.vue";
 import AppUpdateDialog from "./components/AppUpdateDialog.vue";
@@ -160,9 +160,9 @@ const {
   addImage,
   removeImage,
   moveImage,
+  reorderImages,
   updateImage,
   updateWork,
-  setCover,
   setCoverDesign,
   setGalleryLayout,
   hydrateImages,
@@ -296,6 +296,29 @@ const layoutStyle = computed(() => ({
 let removeCloseRequestedListener = null;
 let removeExitRequestedListener = null;
 let appIsUnmounted = false;
+
+// Export has to start from a complete set of images. The first hydration pass
+// can lose the race with the asset index, and the page would then be captured as
+// a blank card (which is why re-importing a picture used to "fix" an export).
+// So before any capture: make sure the library is initialised, retry the missing
+// sources, wait for the scene composites, let Vue paint them into the DOM, and
+// refuse to write a partial set when something is still missing.
+async function ensurePagesReadyForExport() {
+  if (creationMode.value === "gallery") {
+    await assetLibrary.init();
+    await hydrateImages((assetId) => assetLibrary.getAssetDataUrl(assetId), { retry: 3 });
+  }
+  await galleryScene.ensureReady();
+  await nextTick();
+  if (creationMode.value !== "gallery") return;
+  const missing = (pages.value || []).filter(
+    (page) => page?.gallery && !page.gallery.empty && page.gallery.missing,
+  );
+  if (missing.length) {
+    throw new Error(t("runtime.exportMissingImages", { count: missing.length }));
+  }
+}
+
 const { exportCurrentPage, exportToAssetLibrary, exportAction } = useCardExport({
   activePageIndex,
   pages,
@@ -319,7 +342,7 @@ const { exportCurrentPage, exportToAssetLibrary, exportAction } = useCardExport(
   customFontFamily,
   customFontEmbedCss,
   assetLibrary,
-  ensurePagesReady: galleryScene.ensureReady,
+  ensurePagesReady: ensurePagesReadyForExport,
 });
 
 const publishPlan = usePublishPlan({
@@ -339,7 +362,6 @@ const publishPlan = usePublishPlan({
 const publishBundle = usePublishBundle({
   pages,
   sourcePath,
-  exportPath,
   themeClass: selectedThemeClass,
   selectedTheme,
   backgroundColor,
@@ -349,11 +371,12 @@ const publishBundle = usePublishBundle({
   scale,
   showTopLeft,
   showTopRight,
+  showPageNumber,
   showBottomLeft,
   showBottomRight,
   customFontFamily,
   customFontEmbedCss,
-  ensurePagesReady: galleryScene.ensureReady,
+  ensurePagesReady: ensurePagesReadyForExport,
 });
 
 const publishHistory = usePublishHistory();
@@ -375,8 +398,12 @@ const cardRenderOptions = computed(() => ({
   backgroundValue: backgroundValue.value,
   showTopLeft: showTopLeft.value,
   showTopRight: showTopRight.value,
+  showPageNumber: showPageNumber.value,
   showBottomLeft: showBottomLeft.value,
   showBottomRight: showBottomRight.value,
+  // Same scale→quality mapping the exporter uses, so the phone sees the bytes
+  // the export would write instead of renderPageToImage's default.
+  quality: scale.value === 1 ? 0.8 : scale.value === 3 ? 0.95 : 0.9,
   customFontFamily: customFontFamily.value,
   customFontEmbedCss: customFontEmbedCss.value,
 }));
@@ -385,7 +412,11 @@ const qrPreview = useQrPreview({
   pages,
   renderOptions: cardRenderOptions,
   selectedFormat,
-  ensurePagesReady: galleryScene.ensureReady,
+  // The phone must get the same finished pages the exporter writes: hydrated
+  // image sources, scene composites painted, and no page silently missing its
+  // picture. Handing over the ready-and-verified set is what keeps the two
+  // surfaces from drifting apart.
+  ensurePagesReady: ensurePagesReadyForExport,
 });
 const {
   isOpen: qrPanelOpen,
@@ -497,11 +528,36 @@ function backToCreation() {
 }
 
 function handlePublishAction(issue) {
-  if (issue?.action?.type === "switch-canvas") {
+  const actionType = issue?.action?.type;
+  if (actionType === "switch-canvas") {
     applyChannelCanvas(publishPlan.channel.value);
     return;
   }
+  if (actionType === "truncate-title" || actionType === "truncate-body" || actionType === "trim-tags") {
+    applyContentFix(actionType);
+    return;
+  }
   backToCreation();
+}
+
+function applyContentFix(actionType) {
+  const channel = publishPlan.channel.value;
+  const plan = publishPlan.plan.value;
+  if (!channel || !plan) return;
+  const truncate = (text, max) => {
+    const points = Array.from(String(text || ""));
+    return points.length > max ? points.slice(0, max).join("") : String(text || "");
+  };
+  if (actionType === "truncate-title") {
+    publishPlan.updateOverrides({ title: truncate(plan.content.title, channel.limits.title.max) });
+    return;
+  }
+  if (actionType === "truncate-body") {
+    publishPlan.updateOverrides({ body: truncate(plan.content.body, channel.limits.body.max) });
+    return;
+  }
+  const tags = Array.isArray(plan.content.tags) ? plan.content.tags : [];
+  publishPlan.updateOverrides({ tags: tags.slice(0, channel.limits.tags.max) });
 }
 
 const { resolvedAppearance, setAppearancePreference } = useAppPreferences();
@@ -593,6 +649,14 @@ function scheduleGalleryTint(image, source) {
       // Sampling is decorative; keep the wallpaper fallback.
     }
   }, 0);
+}
+
+// The sequence panel labels each image with its original file name. Work
+// images only persist an assetId, so the name is resolved from the library and
+// falls back to the short hash when the asset is gone.
+function galleryAssetName(assetId) {
+  const asset = assetLibrary.getAsset(assetId);
+  return asset?.name || asset?.fileName || "";
 }
 
 async function addGalleryAssets(assets = []) {
@@ -697,12 +761,21 @@ function handleMovePage({ fromIndex, toIndex }) {
   movePage({ fromIndex, toIndex });
 }
 
+// Sorting rewrites the stored sequence, so the preview has to keep following
+// the same picture rather than jumping to whatever now sits at its old index.
+function handleSortGalleryImages(imageIds) {
+  const activeId = currentWork.value?.images?.[activeGalleryImageIndex.value]?.id;
+  if (!reorderImages(imageIds)) return;
+  const index = currentWork.value.images.findIndex((image) => image.id === activeId);
+  if (index >= 0) selectPage(galleryCoverPageOffset() + index);
+}
+
 function handleGalleryOverlay({ imageId, overlay }) {
   updateImage(imageId, { overlay });
 }
 
 // Dragging a decoration in the preview writes the final position once, on drop.
-function handleOverlayMove({ id, x, y } = {}) {
+function handleOverlayMove({ id, x, y, size } = {}) {
   const image = activeGalleryImage.value;
   if (!image || !id) return;
   const overlay = image.overlay && typeof image.overlay === "object" ? image.overlay : { items: [] };
@@ -711,7 +784,12 @@ function handleOverlayMove({ id, x, y } = {}) {
   updateImage(image.id, {
     overlay: {
       ...overlay,
-      items: items.map((item) => (item.id === id ? { ...item, x, y } : item)),
+      items: items.map((item) => {
+        if (item.id !== id) return item;
+        const next = { ...item, x, y };
+        if (Number.isFinite(size)) next.size = size;
+        return next;
+      }),
     },
   });
 }
@@ -725,13 +803,6 @@ function galleryCoverPageOffset() {
 function handleGalleryImageSelect(index) {
   const safeIndex = Number.isInteger(index) ? index : 0;
   selectPage(Math.max(0, galleryCoverPageOffset() + safeIndex));
-}
-
-function handleSetGalleryCover(image) {
-  if (!image?.assetId) return;
-  setCover(image.assetId);
-  const index = (currentWork.value?.images || []).findIndex((item) => item.id === image.id);
-  selectPage(Math.max(0, galleryCoverPageOffset() + Math.max(0, index)));
 }
 
 function handleGalleryLayout(patch) {
@@ -1095,13 +1166,14 @@ onBeforeUnmount(() => {
         :active-index="activeGalleryImageIndex"
         :cover-active="Boolean(currentWork?.coverDesign) && activePageIndex === 0"
         :get-thumb="assetLibrary.getThumbUrl"
+        :get-asset-name="galleryAssetName"
         :is-desktop="assetLibrary.isDesktop.value"
         :scene-thumbs="galleryScene.thumbs.value"
         :scene-active="sceneLookActive"
         @add-images="openAssetPicker"
         @remove-image="handleRemoveGalleryImage"
         @move-image="handleMovePage"
-        @set-cover="handleSetGalleryCover"
+        @sort-images="handleSortGalleryImages"
         @select-image="handleGalleryImageSelect"
         @open-cover-studio="openCoverStudio"
         @remove-cover="handleRemoveCoverDesign"
@@ -1204,12 +1276,14 @@ onBeforeUnmount(() => {
           :active-index="activeGalleryImageIndex"
           :cover-active="Boolean(currentWork?.coverDesign) && activePageIndex === 0"
           :get-thumb="assetLibrary.getThumbUrl"
+          :get-asset-name="galleryAssetName"
           :is-desktop="assetLibrary.isDesktop.value"
           :scene-thumbs="galleryScene.thumbs.value"
+          :scene-active="sceneLookActive"
           @add-images="openAssetPicker"
           @remove-image="handleRemoveGalleryImage"
           @move-image="handleMovePage"
-          @set-cover="handleSetGalleryCover"
+          @sort-images="handleSortGalleryImages"
           @select-image="handleGalleryImageSelect"
           @open-cover-studio="openCoverStudio"
           @remove-cover="handleRemoveCoverDesign"
@@ -1262,7 +1336,6 @@ onBeforeUnmount(() => {
       :publish="publishPlan"
       :bundle="publishBundle"
       :history="publishHistory"
-      :export-path="exportPath"
       @close="publishDialogOpen = false"
       @switch-canvas="applyChannelCanvas"
       @goto-create="backToCreation"

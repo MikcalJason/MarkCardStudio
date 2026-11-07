@@ -6,6 +6,7 @@ import {
   renderPageToImage,
 } from "./useCardExport.js";
 import { sha256Blob } from "../publish/contentHash.js";
+import { getPublishChannel } from "../config/publishChannels.js";
 import { i18n } from "../i18n/index.js";
 
 function t(key, params) {
@@ -98,13 +99,14 @@ function createDirectoryWriter(rootHandle) {
 
 /**
  * Renders the plan's pages through the shared card renderer and writes the
- * publish bundle. Browser mode uses the File System Access API; without it the
- * flow stops with a message instead of pretending the files exist.
+ * publish bundle. Desktop writes it to the app's own managed publish folder, so
+ * the flow never asks for a target directory; browser mode keeps the File
+ * System Access API because a page has no app folder, and without it the flow
+ * stops with a message instead of pretending the files exist.
  */
 export function usePublishBundle({
   pages,
   sourcePath,
-  exportPath,
   themeClass,
   selectedTheme,
   backgroundColor,
@@ -114,6 +116,7 @@ export function usePublishBundle({
   scale,
   showTopLeft,
   showTopRight,
+  showPageNumber,
   showBottomLeft,
   showBottomRight,
   customFontFamily,
@@ -123,20 +126,49 @@ export function usePublishBundle({
   const isGenerating = ref(false);
   const progress = ref({ stage: "idle", current: 0, total: 0 });
   const lastBundlePath = ref("");
+  // The managed bundle folder, resolved once per session and reused for every
+  // channel so the dialog can name the destination before anything is written.
+  const bundleRootPath = ref("");
+  // Loopback bridge for the assisted channels: the Chrome fill extension pulls
+  // the bundle from here, so opening the creator page needs no folder picker.
+  const bridge = ref(null);
+  const bridgeError = ref("");
 
-  async function resolveTargetFolder() {
-    const stored = exportPath?.value?.trim() || "";
-    if (stored) return stored;
-    const selected = await invoke("pick_export_folder");
-    if (!selected) return "";
-    if (exportPath) exportPath.value = selected;
-    return selected;
+  async function ensureBundleRoot() {
+    if (!isTauriRuntime()) return "";
+    if (bundleRootPath.value) return bundleRootPath.value;
+    let root = "";
+    try {
+      root = await invoke("get_publish_bundle_root");
+    } catch (error) {
+      throw new Error(t("publishFlow.errors.bundleRoot", { error: error?.message || error }));
+    }
+    bundleRootPath.value = typeof root === "string" ? root : "";
+    if (!bundleRootPath.value) {
+      throw new Error(t("publishFlow.errors.bundleRoot", { error: "-" }));
+    }
+    return bundleRootPath.value;
+  }
+
+  async function ensureBridge(bundlePath) {
+    if (!isTauriRuntime() || !bundlePath) return null;
+    const current = bridge.value;
+    if (
+      current &&
+      current.bundlePath === bundlePath &&
+      Number(current.expiresAt) > Date.now()
+    ) {
+      return current;
+    }
+    const started = await invoke("publish_bridge_start", { bundlePath });
+    bridge.value = { ...started, bundlePath };
+    bridgeError.value = "";
+    return bridge.value;
   }
 
   async function createWriter() {
     if (isTauriRuntime()) {
-      const rootFolder = await resolveTargetFolder();
-      if (!rootFolder) return null;
+      const rootFolder = await ensureBundleRoot();
       return { writer: createTauriWriter(), rootFolder };
     }
     if (typeof window.showDirectoryPicker !== "function") return null;
@@ -183,6 +215,7 @@ export function usePublishBundle({
     const { writer } = created;
     const list = pages?.value || [];
     const ext = String(plan.options.format).toUpperCase() === "JPG" ? "jpg" : "png";
+    const maxBytes = getPublishChannel(plan.channelId)?.media?.maxBytes || 0;
     const quality = jpegQualityForScale(plan.options.scale);
     const renderContext = {
       width: plan.canvas.width,
@@ -194,9 +227,12 @@ export function usePublishBundle({
       backgroundValue: backgroundValue?.value || "",
       format: plan.options.format,
       quality,
-      totalPages: plan.images.length,
+      // Document order, matching the export and the scan preview: the bundle may
+      // reorder pages for a channel, but the printed number belongs to the doc.
+      totalPages: list.length,
       showTopLeft: showTopLeft?.value ?? true,
       showTopRight: showTopRight?.value ?? true,
+      showPageNumber: showPageNumber?.value ?? true,
       showBottomLeft: showBottomLeft?.value ?? true,
       showBottomRight: showBottomRight?.value ?? true,
       customFontFamily: customFontFamily?.value || "",
@@ -218,8 +254,19 @@ export function usePublishBundle({
         progress.value = { stage: "render", current: index + 1, total: plan.images.length };
         const rendered = await renderPageToImage(page, {
           ...renderContext,
-          pageNumber: index + 1,
+          pageNumber: planned.pageIndex + 1,
         });
+
+        // A scene page renders on a much larger canvas, so the channel's byte
+        // limit can be blown after a bundle is "ready". Fail here, with the page
+        // named, instead of during the upload.
+        if (maxBytes && rendered.blob.size > maxBytes) {
+          throw new Error(t("publishFlow.errors.imageTooLarge", {
+            page: planned.pageIndex + 1,
+            size: (rendered.blob.size / (1024 * 1024)).toFixed(1),
+            max: Math.round(maxBytes / (1024 * 1024)),
+          }));
+        }
 
         const file = `images/${String(index + 1).padStart(2, "0")}.${ext}`;
         await writer.write(file, rendered.blob);
@@ -278,7 +325,18 @@ export function usePublishBundle({
       progress.value = { stage: "manifest", current: plan.images.length, total: plan.images.length };
       const bundlePath = await writer.finish(JSON.stringify(manifest, null, 2));
       lastBundlePath.value = bundlePath || "";
-      return { bundlePath, manifest, imageCount: images.length };
+
+      // Assisted channels hand the finished bundle to the Chrome extension over
+      // a loopback bridge. A bridge failure must not fail a bundle that was
+      // already written, so it is reported separately.
+      let bridgeInfo = null;
+      if (channel.mode === "assist" && bundlePath) {
+        bridgeInfo = await ensureBridge(bundlePath).catch((error) => {
+          bridgeError.value = error?.message || String(error);
+          return null;
+        });
+      }
+      return { bundlePath, manifest, imageCount: images.length, bridge: bridgeInfo };
     } catch (error) {
       await writer.abort().catch(() => {});
       throw error?.message ? error : new Error(String(error));
@@ -298,6 +356,11 @@ export function usePublishBundle({
   }
 
   return {
+    bridge,
+    bridgeError,
+    bundleRootPath,
+    ensureBridge,
+    ensureBundleRoot,
     generatePublishBundle,
     isGenerating,
     lastBundlePath,

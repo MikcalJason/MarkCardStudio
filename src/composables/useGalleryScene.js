@@ -1,5 +1,9 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { SCENE_MOCKUP_TEMPLATES, SCENE_QUAD_POINTS } from "../config/sceneMockups.js";
+import {
+  SCENE_MOCKUP_TEMPLATES,
+  SCENE_QUAD_POINTS,
+  scenePageSize,
+} from "../config/sceneMockups.js";
 import {
   canvasToBlob,
   composeSceneMockup,
@@ -7,6 +11,7 @@ import {
   loadSceneImage,
   releaseCardPixels,
   releaseSceneImage,
+  releaseSceneScratch,
 } from "../utils/sceneMockup.js";
 import {
   readImageQuadOverrides,
@@ -16,7 +21,6 @@ import {
 // Scene backdrops are derived at runtime and never persisted as image bytes:
 // only `gallery.sceneId` lives in the work. Regenerating on load also keeps the
 // composite in sync with the current platform canvas and card calibration.
-const MAX_BACKDROP_SIDE = 2048;
 const THUMB_SIDE = 360;
 const PREVIEW_SIDE = 480;
 
@@ -62,15 +66,20 @@ export function useGalleryScene({ workRef, platformRef, activeImageRef = null })
   const isActive = computed(
     () => workRef.value?.gallery?.background === "scene" && Boolean(template.value),
   );
-  const size = computed(() => {
-    const width = Number(platformRef.value?.width) || 1080;
-    const height = Number(platformRef.value?.height) || 1440;
-    const scale = Math.min(1, MAX_BACKDROP_SIDE / Math.max(width, height));
-    return {
-      width: Math.max(2, Math.round(width * scale)),
-      height: Math.max(2, Math.round(height * scale)),
-    };
+  // Composites are baked at the page's own size, so the card is warped straight
+  // into scene pixels instead of being minified twice on the way to the export.
+  // The frame follows the quad the compositor actually warps into — sizing it
+  // from the shipped default while corners sit on a much larger plate upsamples
+  // the card, and the exporter would land on a different scale.
+  const platformSize = computed(() => {
+    const platformWidth = Number(platformRef.value?.width) || 1080;
+    return { width: platformWidth, height: Number(platformRef.value?.height) || 1440 };
   });
+  const sizeForQuad = (quad) => {
+    const platform = platformSize.value;
+    return scenePageSize(platform.width, platform.height, quad, platform.width);
+  };
+  const size = computed(() => sizeForQuad(template.value?.quad));
   // The tail of a data URL changes with the asset bytes while keeping this
   // watcher cheap; asset ids are content-addressed, so the id alone is usually
   // enough and the tail only catches re-hydration.
@@ -229,11 +238,17 @@ export function useGalleryScene({ workRef, platformRef, activeImageRef = null })
     const scene = template.value;
     if (!isActive.value || !scene) {
       status.value = "idle";
+      // Leaving the scene look must not leave dozens of composite blobs (and the
+      // pooled intermediate canvases) resident for the rest of the session.
+      clearCache();
+      releaseSceneScratch();
       return;
     }
 
-    const canvasSize = size.value;
-    const signature = `${scene.id}|${canvasSize.width}x${canvasSize.height}`;
+    // The cache is keyed per calibration, so the frame size is derived inside the
+    // loop from each image's own quad rather than taken once for the whole run.
+    const platform = platformSize.value;
+    const signature = `${scene.id}|${platform.width}x${platform.height}`;
     if (signature !== sceneSignature) {
       sceneSignature = signature;
       clearCache();
@@ -291,6 +306,7 @@ export function useGalleryScene({ workRef, platformRef, activeImageRef = null })
       for (const image of ordered) {
         if (token !== runToken) return;
         const quad = quadFor(image);
+        const canvasSize = sizeForQuad(quad);
         // Two entries can share one asset (the same picture twice) while needing
         // different corners, so the calibration is part of the cache key.
         const key = `${signature}|${image.assetId}|${JSON.stringify(quad)}`;
@@ -342,15 +358,16 @@ export function useGalleryScene({ workRef, platformRef, activeImageRef = null })
       failedCount.value = failed;
       status.value = failed ? "error" : "ready";
       pruneCache();
-      // Every image composites its own card, so the decoded-pixel cache only
-      // holds a few megabytes of a card that is already done.
-      releaseCardPixels();
     })();
 
     activeRun = run;
     try {
       await run;
     } finally {
+      // Run-scoped resources: a superseded or failed run must free them too, not
+      // only the happy path that ends with the gallery ready.
+      releaseCardPixels();
+      releaseSceneScratch();
       if (activeRun === run) activeRun = null;
     }
   }

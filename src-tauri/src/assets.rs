@@ -652,12 +652,18 @@ mod tests {
         let _ = fs::remove_dir_all(&library);
         let index = serde_json::json!({
             "schemaVersion": 1,
+            // The frontend owns these arrays and Rust must pass them through,
+            // because a dropped `roots` hides the mounted-folder rail.
+            "roots": [{ "rootId": "root_1", "path": "/vault" }],
+            "recentRoots": [{ "rootId": "root_2", "path": "/other" }],
             "assets": [{ "assetId": format!("sha256:{}", "b".repeat(64)), "path": "assets/bb/bb/file.png" }]
         });
 
         write_asset_index(&library, &index).unwrap();
         let restored = read_asset_index(&library).unwrap();
         assert_eq!(restored["assets"][0]["assetId"], index["assets"][0]["assetId"]);
+        assert_eq!(restored["roots"][0]["path"], "/vault");
+        assert_eq!(restored["recentRoots"][0]["rootId"], "root_2");
         assert!(write_asset_index(&library, &serde_json::json!({ "assets": "nope" })).is_err());
 
         fs::write(library.join("index.json"), b"not-json").unwrap();
