@@ -188,6 +188,9 @@ export default {
     recentFolders: "Recently scanned",
     remount: "Re-import",
     remountHint: "Mount and scan the last known path again without picking the folder",
+    forgetRoot: "Forget folder",
+    forgetRootHint: "Removes this entry from Recently scanned. Assets are kept and the folder can be scanned again with Import folder.",
+    detachRecentHint: "After detaching, import it again with one click from Recently scanned.",
     relocate: "Relocate",
     relocateHint: "Pick the new location after moving or renaming the folder; unchanged relative paths relink instead of duplicating.",
     rescanAll: "Rescan all",
@@ -301,6 +304,9 @@ export default {
     title: "Gallery",
     count: "{count} images",
     add: "Add images",
+    clear: "Clear gallery",
+    clearConfirm:
+      "Remove all {count} images from this gallery? The originals in the asset library stay untouched.",
     sequenceHint: "Sequence is publish order. The first image is the cover; drag to reorder.",
     emptyTitle: "Add your first image",
     emptyDesc: "Choose images from the library or import files. Each image becomes a 3:4 card.",
@@ -723,6 +729,8 @@ export default {
     binaryFailed: "Could not generate binary data",
     writeFailed: "Could not write local file: {error}",
     renderFailed: "Could not render page {page}",
+    blankCard: "Page {page} was captured without its card image; export again",
+    blankPage: "Page {page} was captured as background only; export again",
     convertFailed: "Could not convert to a {format} image",
     longImageFailed: "Could not create the stitched long image",
     pdfFailed: "Could not generate PDF page {page}",
@@ -880,12 +888,6 @@ export default {
     alreadyPublished: "A bundle for this content was created at {time}. Retry or publish manually.",
     blockedHint: "Resolve the blocking issues before publishing.",
     footerHint: "Target channel: {channel}",
-    apiPending:
-      "This account has no permission check yet. Run Check API permissions in Settings → Channels: when the draft box is available you can push the finished bundle straight to WeChat drafts; otherwise keep uploading the bundle by hand.",
-    apiGrantedPending:
-      "This account has the draft API permission: once the bundle is generated, the same step can push it straight to the WeChat draft box. The final broadcast/publish stays your click in the console.",
-    apiBlocked:
-      "WeChat reports this account has no draft API permission (typical for personal-subject or unverified accounts), so API publishing is not possible. Keep using the bundle for a manual upload, or re-check interface permissions in Settings → Channels.",
     draft: {
       title: "Push to the WeChat draft box",
       push: "Push to drafts",
@@ -895,6 +897,18 @@ export default {
         "Upload {count} cards to {channel} and create one draft? The final broadcast/publish stays your click in the console.",
       done: "Image-post draft created with {count} cards. Open the WeChat console draft box to review and broadcast.",
       stages: { upload: "Uploading image material", draft: "Creating image post" },
+      probe: "Check API permissions",
+      probing: "Checking API permissions…",
+      probeFailed: "Permission check failed: {error}",
+      wechatSaid: "WeChat said: {message}",
+      needProbe:
+        "There is no draft-permission verdict for this account (never checked, older than 30 days, or the credentials changed). You can push straight away — WeChat states why if it refuses — or run Check API permissions first.",
+      blockedIp:
+        "WeChat rejected this egress IP: it is not in the console's IP whitelist. With a relay proxy configured, the address to whitelist is the one shown in Settings → Channels (the proxy's public IP), not this machine's. Fix it and run Check API permissions again.",
+      invalidCredentials:
+        "The AppID / AppSecret or access_token is no longer valid. Update the credentials in Settings → Channels, then run Check API permissions.",
+      denied:
+        "WeChat reports this account has no draft API permission (typical for personal-subject or unverified accounts), so API publishing is not possible. Keep using the bundle for a manual upload; re-check once the account is verified.",
     },
     credentials: {
       title: "WeChat account",
@@ -915,7 +929,6 @@ export default {
       secretKeep: "Leave blank to keep the current secret",
       exitIp: "Public egress IP",
       exitIpHint: "needed for the WeChat IP whitelist",
-      fetchIp: "Get public IP",
       fetchingIp: "Looking up…",
       copyIp: "Copy",
       ipCopied: "Copied",
@@ -952,6 +965,20 @@ export default {
       },
       keychainHint: "Secrets live in the system keychain (macOS Keychain / Windows Credential Manager / Linux Secret Service).",
       ipHint: "Add this network's egress IP to the WeChat IP whitelist as well.",
+      proxiedIpHint: "Relay proxy is on: the IP above is the relay server's egress IP — whitelist that one in the WeChat console.",
+      proxyTitle: "Egress relay proxy",
+      proxyOff: "Direct",
+      proxyOn: "via {url}",
+      proxySetup: "Set up proxy",
+      proxyUpdate: "Change",
+      proxyClear: "Turn off",
+      proxyClearConfirm: "Turn off the relay proxy? WeChat calls go back to a direct connection.",
+      proxyPlaceholder: "socks5h://user:pass{'@'}1.2.3.4:11080",
+      proxyHint: "Point this at a proxy on your own server — socks5h:// is preferred (run gost -L socks5://user:pass{'@'}:11080 there), http:// also works. Tokens, material uploads, drafts and permission probes all leave through it, so WeChat only sees the server's fixed IP; the AppSecret still stays in this machine's keychain.",
+      proxySaved: "Relay proxy saved; the egress IP has been refreshed.",
+      proxyCleared: "Relay proxy turned off; calls go direct again.",
+      proxySave: "Save proxy",
+      proxySaving: "Saving…",
       testOk: "Connected. The token is valid for {seconds} seconds.",
       testFail: "Connection failed: {message}",
       save: "Save",
@@ -1055,7 +1082,7 @@ export default {
       manifest: "Writing manifest",
     },
     channelNotes: {
-      "wechat-newspic": "Create the bundle, copy the text, then upload the images in the WeChat editor. Drafts become automatic once the API is wired up.",
+      "wechat-newspic": "Create the bundle, then push it to the WeChat draft box in the same step (an image-post draft, never broadcast). If WeChat refuses, follow the message or upload the bundle by hand.",
       "xhs-note": "Use Create bundle and open creator studio: the app writes the bundle, opens a temporary read-only local address, and the Chrome extension fills the title, body and images once the page loads. The extension never presses 发布; without it, copy the text and upload the images yourself.",
       "local-bundle": "Only writes manifest, images and copy so the folder can be uploaded anywhere.",
     },

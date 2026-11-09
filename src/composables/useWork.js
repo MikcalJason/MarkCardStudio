@@ -368,6 +368,16 @@ export function useWork() {
     return true;
   }
 
+  function clearImages() {
+    if (!currentWork.value) return false;
+    if (!currentWork.value.images.length) return false;
+    currentWork.value.images = [];
+    currentWork.value.cover = null;
+    currentWork.value.updatedAt = nowIso();
+    persistSoon();
+    return true;
+  }
+
   function moveImage(fromIndex, toIndex) {
     if (!currentWork.value) return false;
     const images = currentWork.value.images;
@@ -553,6 +563,7 @@ export function useWork() {
     syncFromDocument,
     addImage,
     removeImage,
+    clearImages,
     moveImage,
     reorderImages,
     updateImage,

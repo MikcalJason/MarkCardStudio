@@ -44,6 +44,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   "add-images",
+  "clear-images",
   "remove-image",
   "move-image",
   "sort-images",
@@ -175,6 +176,18 @@ function onDragEnd() {
             @click="$emit('sort-images', descIds)"
           >
             <AppIcon name="arrow-down-wide-narrow" :size="14" />
+          </button>
+          <!-- Clearing keeps the work and its cover design; only the image
+               sequence is dropped, and App confirms before doing it. -->
+          <button
+            type="button"
+            class="grid h-8 w-8 place-items-center rounded-lg border border-slate-200/90 text-slate-500 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40 dark:border-slate-700/80 dark:text-slate-400 dark:hover:border-rose-900/70 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+            :disabled="!images.length"
+            :aria-label="t('gallery.clear')"
+            :title="t('gallery.clear')"
+            @click="$emit('clear-images')"
+          >
+            <AppIcon name="trash-2" :size="14" />
           </button>
           <button
             type="button"

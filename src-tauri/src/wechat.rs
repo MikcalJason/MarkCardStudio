@@ -333,11 +333,10 @@ fn wechat_error(body: &Value, token: &str) -> Option<String> {
 }
 
 /// Uploads of a 10 MB card need far more than the 15 s used for token calls.
+/// Built through `channels` so a configured relay proxy carries the upload too:
+/// a material upload from a different egress IP would hit the whitelist.
 fn upload_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|err| format!("Failed to create HTTP client: {err}"))
+    channels::client_with_timeout(60)
 }
 
 async fn read_wechat_response(
@@ -450,6 +449,9 @@ pub async fn publish_wechat_draft_from_bundle(
     };
 
     let token = channels::wechat_access_token(&app_id, &app_secret).await?;
+    // A cached token skips the token request, so make sure the relay proxy is
+    // resolved before the uploads build their own client.
+    channels::prepare_proxy().await?;
     let total = spec.images.len();
 
     // 图片消息 references permanent material, so every card is uploaded with

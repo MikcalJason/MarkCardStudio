@@ -1222,6 +1222,19 @@ export function useAssetLibrary() {
     return runFolderScan(remembered.path, remembered);
   }
 
+  // Dropping the shortcut is not detaching: the assets stay in the library and
+  // the folder can still be scanned again through the native picker. Only a
+  // mounted root is refused, because forgetting it would leave its section
+  // without the rescan and detach controls.
+  function forgetRoot(rootId) {
+    if (roots.value.some((root) => root.rootId === rootId)) return false;
+    const next = recentRoots.value.filter((root) => root.rootId !== rootId);
+    if (next.length === recentRoots.value.length) return false;
+    recentRoots.value = next;
+    flushPersist();
+    return true;
+  }
+
   function detachRoot(rootId, { archive = false } = {}) {
     const detached = roots.value.find((root) => root.rootId === rootId) || null;
     roots.value = roots.value.filter((root) => root.rootId !== rootId);
@@ -1606,6 +1619,7 @@ export function useAssetLibrary() {
     rescanAllRoots,
     relocateRoot,
     remountRoot,
+    forgetRoot,
     assetsUnderRoot,
     detachRoot,
     filteredCount: computed(() => filteredAssets.value.length),

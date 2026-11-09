@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import AppIcon from "../AppIcon.vue";
 import PublishChecklist from "./PublishChecklist.vue";
 import { TAG_SUGGESTIONS, countCodePoints } from "../../config/publishChannels.js";
-import { draftApiState } from "../../storage/channelPermissions.js";
+import { draftProbeVerdict, writeChannelPermissions } from "../../storage/channelPermissions.js";
 import { openExternalUrl } from "../../utils/externalUrl.js";
 import { bridgeMinutesLeft, withBridgeHash } from "../../utils/publishBridge.js";
 
@@ -53,16 +53,51 @@ const channel = computed(() => props.publish.channel.value);
 // The probe stores verdicts under the native channel id, which differs from the
 // publish channel id, so map before reading the cache.
 const PROBE_CHANNEL_BY_ID = { "wechat-newspic": "wechat" };
-const apiPermissionState = ref("unknown");
-const apiNoticeKey = computed(() => {
-  if (apiPermissionState.value === "allowed") return "publishFlow.apiGrantedPending";
-  if (apiPermissionState.value === "denied") return "publishFlow.apiBlocked";
-  return "publishFlow.apiPending";
-});
+const probeChannel = computed(() => PROBE_CHANNEL_BY_ID[channel.value?.id] || "");
+// allowed | denied | blocked | invalid | retry | unknown | missing
+const draftVerdict = ref("missing");
+const probing = ref(false);
+const probeError = ref("");
+// The probe's own errmsg is the only place WeChat names the egress IP it
+// rejected, so it is kept in memory (never cached) and shown under the notice.
+const probeMessage = ref("");
+
+const DRAFT_NOTICE_KEYS = {
+  blocked: "publishFlow.draft.blockedIp",
+  invalid: "publishFlow.draft.invalidCredentials",
+  denied: "publishFlow.draft.denied",
+};
+const draftNoticeKey = computed(
+  () => DRAFT_NOTICE_KEYS[draftVerdict.value] || "publishFlow.draft.needProbe",
+);
 
 function refreshApiPermissionState() {
-  const probeChannel = PROBE_CHANNEL_BY_ID[channel.value?.id];
-  apiPermissionState.value = probeChannel ? draftApiState(probeChannel) : "unknown";
+  draftVerdict.value = draftProbeVerdict(probeChannel.value);
+  probeError.value = "";
+  probeMessage.value = "";
+}
+
+async function runPermissionProbe() {
+  if (!probeChannel.value || probing.value) return;
+  probing.value = true;
+  probeError.value = "";
+  probeMessage.value = "";
+  try {
+    const outcome = await invoke("probe_channel_permissions", { channel: probeChannel.value });
+    const items = outcome?.items || [];
+    writeChannelPermissions(
+      probeChannel.value,
+      items.map((item) => ({ key: item.key, status: item.status })),
+    );
+    probeMessage.value = items.find((item) => item.key === "draft")?.message || "";
+    draftVerdict.value = draftProbeVerdict(probeChannel.value);
+  } catch (error) {
+    // A failed check is not a verdict WeChat ever gave.
+    draftVerdict.value = "retry";
+    probeError.value = error?.message || String(error);
+  } finally {
+    probing.value = false;
+  }
 }
 const preflight = computed(() => props.publish.preflight.value);
 const readiness = computed(() => props.publish.readiness.value);
@@ -409,13 +444,27 @@ function markPublished() {
   errorMessage.value = "";
 }
 
+// A missing permission record used to hide the push action entirely, which read
+// as the whole WeChat flow being broken. WeChat answers before any card is
+// uploaded (the token call rejects a bad credential or a non-whitelisted IP), so
+// an unchecked verdict still pushes; only a verdict WeChat itself gave stops it.
+const PUSH_REFUSED_VERDICTS = ["denied", "blocked", "invalid"];
+const draftPanelOpen = computed(() => isTauri && channel.value?.mode === "api");
 const canPushDraft = computed(
   () =>
-    isTauri &&
-    channel.value?.mode === "api" &&
-    apiPermissionState.value === "allowed" &&
-    Boolean(result.value?.bundlePath),
+    draftPanelOpen.value &&
+    Boolean(result.value?.bundlePath) &&
+    !PUSH_REFUSED_VERDICTS.includes(draftVerdict.value),
 );
+
+// A push answers with the same errcodes the probe maps, so trust the platform
+// over a cached verdict that may predate a whitelist or credential change.
+function applyPushVerdict(message) {
+  const errcode = /^(\d{4,6}):/.exec(String(message || ""))?.[1];
+  if (errcode === "40164") draftVerdict.value = "blocked";
+  else if (errcode === "48001") draftVerdict.value = "denied";
+  else if (["40001", "41001", "42001"].includes(errcode)) draftVerdict.value = "invalid";
+}
 
 async function handlePushDraft() {
   if (!canPushDraft.value || draftState.value === "running") return;
@@ -455,7 +504,9 @@ async function handlePushDraft() {
     props.publish.markVariantReady();
   } catch (error) {
     draftState.value = "failed";
-    errorMessage.value = error?.message || String(error);
+    const message = error?.message || String(error);
+    errorMessage.value = message;
+    applyPushVerdict(message);
   } finally {
     unlistenDraft?.();
     unlistenDraft = null;
@@ -967,25 +1018,18 @@ onBeforeUnmount(() => {
                 {{ t("publishFlow.bridge.failed", { error: bridgeError }) }}
               </p>
 
+              <!-- One surface for every permission verdict: before this existed, a
+                   stale or missing check silently removed the push action. -->
               <div
-                v-if="canPushDraft"
+                v-if="draftPanelOpen"
                 class="rounded-xl border border-slate-200/90 bg-white/70 p-3 dark:border-slate-700/80 dark:bg-slate-800/40"
               >
                 <div class="flex flex-wrap items-center gap-2">
                   <p class="min-w-0 flex-1 text-[12px] font-bold text-slate-700 dark:text-slate-200">
                     {{ t("publishFlow.draft.title") }}
                   </p>
-                  <button
-                    v-if="draftState !== 'running'"
-                    type="button"
-                    class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-[12px] font-bold text-white transition-colors hover:bg-blue-700 cursor-pointer"
-                    @click="handlePushDraft"
-                  >
-                    <AppIcon name="upload" :size="14" />
-                    {{ draftState === "done" ? t("publishFlow.draft.again") : t("publishFlow.draft.push") }}
-                  </button>
                   <span
-                    v-else
+                    v-if="draftState === 'running'"
                     class="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-500 dark:text-slate-400"
                   >
                     <AppIcon name="loader" :size="14" class="animate-spin text-blue-600" />
@@ -994,6 +1038,25 @@ onBeforeUnmount(() => {
                       {{ draftProgress.current }}/{{ draftProgress.total }}
                     </span>
                   </span>
+                  <button
+                    v-else-if="canPushDraft"
+                    type="button"
+                    class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-[12px] font-bold text-white transition-colors hover:bg-blue-700 cursor-pointer"
+                    @click="handlePushDraft"
+                  >
+                    <AppIcon name="upload" :size="14" />
+                    {{ draftState === "done" ? t("publishFlow.draft.again") : t("publishFlow.draft.push") }}
+                  </button>
+                  <button
+                    v-else-if="draftVerdict !== 'allowed'"
+                    type="button"
+                    class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200/90 px-3 text-[12px] font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
+                    :disabled="probing"
+                    @click="runPermissionProbe"
+                  >
+                    <AppIcon :name="probing ? 'loader' : 'shield'" :size="14" :class="{ 'animate-spin': probing }" />
+                    {{ probing ? t("publishFlow.draft.probing") : t("publishFlow.draft.probe") }}
+                  </button>
                 </div>
                 <div
                   v-if="draftState === 'running'"
@@ -1010,8 +1073,23 @@ onBeforeUnmount(() => {
                 >
                   {{ t("publishFlow.draft.done", { count: draftResult?.imageCount || 0 }) }}
                 </p>
-                <p v-else class="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                <p
+                  v-else-if="draftVerdict === 'allowed' || draftState === 'running'"
+                  class="mt-1 text-[11px] leading-5 text-slate-500 dark:text-slate-400"
+                >
                   {{ t("publishFlow.draft.desc") }}
+                </p>
+                <p v-else class="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300">
+                  {{ t(draftNoticeKey) }}
+                </p>
+                <p v-if="probeError" class="mt-1 text-[11px] leading-5 text-rose-700 dark:text-rose-300">
+                  {{ t("publishFlow.draft.probeFailed", { error: probeError }) }}
+                </p>
+                <p
+                  v-else-if="draftVerdict !== 'allowed' && probeMessage"
+                  class="mt-1 break-all text-[11px] leading-5 text-slate-500 dark:text-slate-400"
+                >
+                  {{ t("publishFlow.draft.wechatSaid", { message: probeMessage }) }}
                 </p>
               </div>
 
@@ -1030,13 +1108,8 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div
-              v-if="channel.mode === 'api' && !channel.apiReady"
-              class="rounded-xl border border-slate-200/90 bg-slate-50/70 p-3 text-left text-[12px] leading-5 text-slate-600 dark:border-slate-700/80 dark:bg-slate-800/50 dark:text-slate-300"
-            >
-              {{ t(apiNoticeKey) }}
-            </div>
-
+            <!-- One surface for every permission verdict: before this existed, a
+                 stale or missing check silently removed the push action. -->
             <p v-if="errorMessage" class="rounded-lg bg-rose-50 px-3 py-2 text-[12px] leading-5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
               {{ errorMessage }}
             </p>

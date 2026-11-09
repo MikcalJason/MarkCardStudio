@@ -66,11 +66,21 @@ export function clearChannelPermissions(channel) {
   return writeChannelPermissions(channel, []);
 }
 
-export function draftApiState(channel) {
-  const record = readChannelPermissions(channel);
-  if (!record) return "unknown";
-  const draft = record.items.find((item) => item.key === "draft");
-  if (!draft) return "unknown";
-  if (draft.status === "allowed") return "allowed";
-  return draft.status === "unauthorized" ? "denied" : "unknown";
+// The publish flow needs more than a yes/no: a whitelist miss and a dead token
+// both read as "never checked" if they collapse to unknown, and then the user
+// has nothing to act on.
+const DRAFT_VERDICTS = {
+  allowed: "allowed",
+  unauthorized: "denied",
+  blockedIp: "blocked",
+  invalidCredentials: "invalid",
+  busy: "retry",
+};
+
+export function draftProbeVerdict(channel) {
+  if (typeof channel !== "string" || !channel) return "missing";
+  const draft = readChannelPermissions(channel)
+    ?.items.find((item) => item.key === "draft");
+  if (!draft) return "missing";
+  return DRAFT_VERDICTS[draft.status] || "unknown";
 }

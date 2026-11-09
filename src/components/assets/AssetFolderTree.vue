@@ -97,6 +97,10 @@ const unmountedRoots = computed(() => {
 async function handleRemount(rootId) {
   await library.remountRoot(rootId);
 }
+
+function handleForget(rootId) {
+  library.forgetRoot(rootId);
+}
 </script>
 
 <template>
@@ -257,6 +261,15 @@ async function handleRemount(rootId) {
         >
           <AppIcon :name="library.isImporting.value ? 'loader' : 'refresh-cw'" :size="12" :class="{ 'animate-spin': library.isImporting.value }" />
           {{ t("assets.remount") }}
+        </button>
+        <button
+          type="button"
+          class="grid h-7 w-7 place-items-center rounded-md text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+          :aria-label="t('assets.forgetRoot')"
+          :title="t('assets.forgetRootHint')"
+          @click="handleForget(root.rootId)"
+        >
+          <AppIcon name="x" :size="12" />
         </button>
       </div>
     </section>

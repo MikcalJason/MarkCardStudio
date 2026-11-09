@@ -159,6 +159,7 @@ const {
   syncFromDocument,
   addImage,
   removeImage,
+  clearImages,
   moveImage,
   reorderImages,
   updateImage,
@@ -744,6 +745,24 @@ function handleRemoveGalleryImage(image) {
   selectPage(Math.max(0, Math.min(target, Math.min(lastImagePage, lastPage))));
 }
 
+// Clearing is a bulk removal, so it has to release the same bookkeeping each
+// single removal does: asset usage refs and per-image corner corrections.
+function handleClearGalleryImages() {
+  const images = currentWork.value?.images || [];
+  if (!images.length) return;
+  if (!window.confirm(t("gallery.clearConfirm", { count: images.length }))) return;
+  const workId = currentWork.value?.id || "";
+  for (const image of images) {
+    clearImageQuadOverrides(image.id);
+    assetLibrary.removeUsage(image.assetId, {
+      workId,
+      ref: `gallery:${image.id}`,
+    });
+  }
+  clearImages();
+  selectPage(0);
+}
+
 function handleDeletePage(index) {
   if (creationMode.value === "gallery") {
     const image = currentWork.value?.images[index - galleryCoverPageOffset()];
@@ -1171,6 +1190,7 @@ onBeforeUnmount(() => {
         :scene-thumbs="galleryScene.thumbs.value"
         :scene-active="sceneLookActive"
         @add-images="openAssetPicker"
+        @clear-images="handleClearGalleryImages"
         @remove-image="handleRemoveGalleryImage"
         @move-image="handleMovePage"
         @sort-images="handleSortGalleryImages"
@@ -1281,6 +1301,7 @@ onBeforeUnmount(() => {
           :scene-thumbs="galleryScene.thumbs.value"
           :scene-active="sceneLookActive"
           @add-images="openAssetPicker"
+          @clear-images="handleClearGalleryImages"
           @remove-image="handleRemoveGalleryImage"
           @move-image="handleMovePage"
           @sort-images="handleSortGalleryImages"

@@ -19,6 +19,8 @@ const PUBLIC_IP_ENDPOINTS: [&str; 3] = [
 const WECHAT_API_BASE: &str = "https://api.weixin.qq.com/cgi-bin";
 const MAX_PROBE_MESSAGE_CHARS: usize = 120;
 const REQUEST_TIMEOUT_SECS: u64 = 15;
+const PROXY_FIELD: &str = "proxy";
+const MAX_PROXY_URL_CHARS: usize = 300;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +42,16 @@ pub struct ChannelTestResult {
 #[serde(rename_all = "camelCase")]
 pub struct PublicIpResult {
     ip: String,
+}
+
+/// The proxy address never comes back with its userinfo: it can carry the login
+/// for the user's own relay box.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelProxyStatus {
+    channel: String,
+    configured: bool,
+    url_masked: String,
 }
 
 /// One read-only permission check. WeChat grants interfaces by account subject
@@ -278,11 +290,127 @@ pub(crate) fn sanitize_error_message(raw: &str, token: &str) -> String {
     format!("{kept}…")
 }
 
-pub(crate) fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+/// The proxy address is a credential too (it may carry the relay's login), so it
+/// lives in the same keychain. Reading the keychain can make the OS prompt, so
+/// the value is resolved once per process and invalidated on every write.
+#[derive(Default)]
+struct ProxyCache {
+    loaded: bool,
+    url: Option<String>,
+}
+
+fn proxy_cache() -> &'static Mutex<ProxyCache> {
+    static CACHE: OnceLock<Mutex<ProxyCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(ProxyCache::default()))
+}
+
+fn invalidate_proxy() {
+    if let Ok(mut guard) = proxy_cache().lock() {
+        guard.loaded = false;
+        guard.url = None;
+    }
+}
+
+/// A bare `host:port` is read as an HTTP proxy, which is what `gost -L :8080`
+/// exposes, so pasting the server address without a scheme still works.
+fn normalize_proxy_url(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("Proxy address is empty".to_string());
+    }
+    if trimmed.chars().count() > MAX_PROXY_URL_CHARS || trimmed.chars().any(char::is_whitespace) {
+        return Err("Proxy address is malformed".to_string());
+    }
+    let candidate = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    };
+    let parsed =
+        reqwest::Url::parse(&candidate).map_err(|_| "Proxy address is not a valid URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return Err("Proxy must use http, https, socks5 or socks5h".to_string());
+    }
+    if parsed.host_str().unwrap_or("").is_empty() {
+        return Err("Proxy address has no host".to_string());
+    }
+    if !matches!(parsed.path(), "" | "/") || parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("Proxy address must not contain a path, query or fragment".to_string());
+    }
+    Ok(parsed.to_string())
+}
+
+/// Keeps the scheme, host and port so the user can confirm which relay box is
+/// active, and replaces any username or password with a mask.
+fn readable_proxy_url(value: &str) -> String {
+    let Ok(parsed) = reqwest::Url::parse(value) else {
+        return String::new();
+    };
+    let host = parsed.host_str().unwrap_or_default();
+    let port = parsed.port().map(|port| format!(":{port}")).unwrap_or_default();
+    let credentials = if parsed.username().is_empty() && parsed.password().is_none() {
+        ""
+    } else {
+        "***@"
+    };
+    format!("{}://{credentials}{host}{port}", parsed.scheme())
+}
+
+pub(crate) fn proxy_url() -> Result<Option<String>, String> {
+    if let Ok(guard) = proxy_cache().lock() {
+        if guard.loaded {
+            return Ok(guard.url.clone());
+        }
+    }
+    let url = entry(WECHAT_CHANNEL, PROXY_FIELD)?
+        .get_password()
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Ok(mut guard) = proxy_cache().lock() {
+        guard.loaded = true;
+        guard.url = url.clone();
+    }
+    Ok(url)
+}
+
+/// Keychain reads can make the OS prompt, so the first resolve happens off the
+/// async runtime; every later `proxy_url()` call is a plain memory read.
+pub(crate) async fn prepare_proxy() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(proxy_url)
+        .await
+        .map_err(|err| format!("Task execution failed: {err}"))??;
+    Ok(())
+}
+
+fn proxy_status_for(channel: &str) -> Result<ChannelProxyStatus, String> {
+    let url = proxy_url()?;
+    Ok(ChannelProxyStatus {
+        channel: channel.to_string(),
+        configured: url.is_some(),
+        url_masked: url.as_deref().map(readable_proxy_url).unwrap_or_default(),
+    })
+}
+
+/// Every WeChat call is built here so a configured relay proxy is always used:
+/// the token, the material upload, the draft call and the probes must all leave
+/// through the same egress IP that the account whitelisted.
+pub(crate) fn client_with_timeout(seconds: u64) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(seconds));
+    if let Some(url) = proxy_url()? {
+        // The URL was validated on save; the message stays generic because a
+        // reqwest error can echo the address, which may contain a password.
+        let proxy = reqwest::Proxy::all(&url)
+            .map_err(|_| "The saved proxy address cannot be used".to_string())?;
+        builder = builder.proxy(proxy);
+    }
+    builder
         .build()
         .map_err(|err| format!("Failed to create HTTP client: {err}"))
+}
+
+pub(crate) fn http_client() -> Result<reqwest::Client, String> {
+    client_with_timeout(REQUEST_TIMEOUT_SECS)
 }
 
 /// Reading the keychain can make macOS ask for the login password, and a rebuild
@@ -318,6 +446,7 @@ pub(crate) async fn wechat_access_token(app_id: &str, app_secret: &str) -> Resul
         }
     }
 
+    prepare_proxy().await?;
     let client = http_client()?;
     let response = client
         .post(WECHAT_TOKEN_URL)
@@ -426,6 +555,52 @@ pub async fn clear_channel_credentials(channel: String) -> Result<ChannelCredent
     .map_err(|err| format!("Task execution failed: {err}"))?
 }
 
+/// Stores the relay proxy the WeChat API leaves through. The AppSecret stays on
+/// this machine: the proxy is only a network hop, never a secret holder.
+#[tauri::command]
+pub async fn set_channel_proxy(
+    channel: String,
+    url: String,
+) -> Result<ChannelProxyStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_channel(&channel)?;
+        let url = normalize_proxy_url(&url)?;
+        entry(&channel, PROXY_FIELD)?
+            .set_password(&url)
+            .map_err(|err| format!("Failed to store proxy: {err}"))?;
+        invalidate_proxy();
+        // The next call must be routed through the new proxy, not a token that
+        // may have been obtained from another egress IP.
+        invalidate_access_token();
+        proxy_status_for(&channel)
+    })
+    .await
+    .map_err(|err| format!("Task execution failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn channel_proxy_status(channel: String) -> Result<ChannelProxyStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_channel(&channel)?;
+        proxy_status_for(&channel)
+    })
+    .await
+    .map_err(|err| format!("Task execution failed: {err}"))?
+}
+
+#[tauri::command]
+pub async fn clear_channel_proxy(channel: String) -> Result<ChannelProxyStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_channel(&channel)?;
+        let _ = entry(&channel, PROXY_FIELD)?.delete_credential();
+        invalidate_proxy();
+        invalidate_access_token();
+        proxy_status_for(&channel)
+    })
+    .await
+    .map_err(|err| format!("Task execution failed: {err}"))?
+}
+
 /// Accepts both JSON responses and the plain-text bodies Chinese echo services
 /// return (e.g. `当前 IP：1.2.3.4 来自于：…`).
 fn extract_ip(text: &str) -> Option<String> {
@@ -444,15 +619,14 @@ fn extract_ip(text: &str) -> Option<String> {
 
 /// The WebView can route through a different proxy or VPN than reqwest, which is
 /// why this lookup runs in Rust: it must report the same egress IP that WeChat
-/// sees for the API calls.
+/// sees for the API calls. It therefore uses the configured relay proxy too, so
+/// an enabled relay shows the relay's address — the one to whitelist.
 #[tauri::command]
 pub async fn fetch_public_ip() -> Result<PublicIpResult, String> {
     // ipify is unreachable from some mainland networks, so several plain-text
     // echo services are tried in order; each is a read-only GET of our own IP.
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .build()
-        .map_err(|err| format!("Failed to create HTTP client: {err}"))?;
+    prepare_proxy().await?;
+    let client = client_with_timeout(6)?;
     let mut last_error = "No IP lookup endpoint responded".to_string();
     for endpoint in PUBLIC_IP_ENDPOINTS {
         match client.get(endpoint).send().await {
@@ -490,6 +664,7 @@ pub async fn test_channel_credentials(channel: String) -> Result<ChannelTestResu
         return Err("Credentials are not configured yet".to_string());
     };
 
+    prepare_proxy().await?;
     let client = http_client()?;
     let response = client
         .post(WECHAT_TOKEN_URL)
@@ -527,6 +702,7 @@ pub async fn probe_channel_permissions(channel: String) -> Result<ChannelPermiss
     };
 
     let token = wechat_access_token(&app_id, &app_secret).await?;
+    prepare_proxy().await?;
     let client = http_client()?;
     let mut items = Vec::new();
     for spec in permission_probes() {
@@ -593,6 +769,38 @@ mod tests {
         );
         assert_eq!(extract_ip("<html>blocked</html>"), None);
         assert_eq!(extract_ip("999.1.1.1"), None);
+    }
+
+    #[test]
+    fn normalizes_relay_proxy_addresses() {
+        assert_eq!(
+            normalize_proxy_url("1.2.3.4:8080").as_deref(),
+            Ok("http://1.2.3.4:8080/")
+        );
+        assert_eq!(
+            normalize_proxy_url("  http://user:pass@relay.example.com:8080  ").as_deref(),
+            Ok("http://user:pass@relay.example.com:8080/")
+        );
+        assert!(normalize_proxy_url("socks5://user:pass@relay.example.com:1080").is_ok());
+        assert!(normalize_proxy_url("socks5h://relay.example.com:1080").is_ok());
+        assert!(normalize_proxy_url("").is_err());
+        assert!(normalize_proxy_url("ftp://relay.example.com:21").is_err());
+        assert!(normalize_proxy_url("http://relay.example.com:8080/proxy").is_err());
+        assert!(normalize_proxy_url("http://relay.example.com:8080?token=1").is_err());
+        assert!(normalize_proxy_url("http://").is_err());
+    }
+
+    #[test]
+    fn masks_proxy_credentials_but_keeps_the_host() {
+        assert_eq!(
+            readable_proxy_url("http://relay.example.com:8080/"),
+            "http://relay.example.com:8080"
+        );
+        assert_eq!(
+            readable_proxy_url("socks5://mark:secret@203.0.113.9:1080"),
+            "socks5://***@203.0.113.9:1080"
+        );
+        assert_eq!(readable_proxy_url("not a url"), "");
     }
 
     #[test]

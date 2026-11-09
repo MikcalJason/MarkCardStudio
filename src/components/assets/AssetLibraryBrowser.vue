@@ -1005,6 +1005,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
         <p class="truncate text-[10px] text-slate-500 dark:text-slate-400" :title="detachRequest.root.path">
           {{ detachRequest.root.path }}
         </p>
+        <p class="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+          {{ t("assets.detachRecentHint") }}
+        </p>
       </div>
     </ConfirmDialog>
 

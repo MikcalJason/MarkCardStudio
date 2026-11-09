@@ -63,6 +63,15 @@ const publicIp = ref("");
 const fetchingIp = ref(false);
 const ipError = ref("");
 const ipCopied = ref(false);
+
+const proxy = ref({ configured: false, urlMasked: "" });
+const proxyOpen = ref(false);
+const proxyUrl = ref("");
+const proxyBusy = ref(false);
+const proxyMessage = ref("");
+const proxyError = ref("");
+const proxyFormRef = ref(null);
+const proxyInputRef = ref(null);
 const probeItems = computed(() => probe.value?.items || []);
 const statusByKey = computed(() =>
   Object.fromEntries(probeItems.value.map((item) => [item.key, item.status])),
@@ -98,6 +107,12 @@ async function refreshStatus() {
   }
   try {
     applyStatus(await invoke("channel_credentials_status", { channel: CHANNEL }));
+    try {
+      const proxyStatus = await invoke("channel_proxy_status", { channel: CHANNEL });
+      if (proxyStatus) proxy.value = proxyStatus;
+    } catch {
+      // A keychain hiccup on the proxy must not hide the credential status.
+    }
     if (status.value.configured) {
       const cached = readChannelPermissions(CHANNEL);
       if (cached) probe.value = { items: cached.items };
@@ -206,6 +221,62 @@ async function copyPublicIp() {
   }
 }
 
+function toggleProxyForm() {
+  proxyOpen.value = !proxyOpen.value;
+  proxyUrl.value = "";
+  proxyMessage.value = "";
+  proxyError.value = "";
+  if (!proxyOpen.value) return;
+  // The proxy card sits at the bottom of the settings dialog body, so an opened
+  // form would land below the fold and look like the button did nothing.
+  nextTick(() => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    proxyFormRef.value?.scrollIntoView({
+      block: "center",
+      behavior: reducedMotion ? "auto" : "smooth",
+    });
+    proxyInputRef.value?.focus({ preventScroll: true });
+  });
+}
+
+async function saveProxy() {
+  const value = proxyUrl.value.trim();
+  if (!value || proxyBusy.value) return;
+  proxyBusy.value = true;
+  proxyMessage.value = "";
+  proxyError.value = "";
+  try {
+    proxy.value = await invoke("set_channel_proxy", { channel: CHANNEL, url: value });
+    proxyUrl.value = "";
+    proxyOpen.value = false;
+    proxyMessage.value = t("publishFlow.credentials.proxySaved");
+    // The whole point of the relay is the egress IP, so show the new one right
+    // away instead of making the user press 获取公网 IP again.
+    await fetchPublicIp();
+  } catch (err) {
+    proxyError.value = readableError(err);
+  } finally {
+    proxyBusy.value = false;
+  }
+}
+
+async function clearProxy() {
+  if (!window.confirm(t("publishFlow.credentials.proxyClearConfirm"))) return;
+  proxyBusy.value = true;
+  proxyMessage.value = "";
+  proxyError.value = "";
+  try {
+    proxy.value = await invoke("clear_channel_proxy", { channel: CHANNEL });
+    proxyOpen.value = false;
+    proxyMessage.value = t("publishFlow.credentials.proxyCleared");
+    await fetchPublicIp();
+  } catch (err) {
+    proxyError.value = readableError(err);
+  } finally {
+    proxyBusy.value = false;
+  }
+}
+
 async function runProbe() {
   busy.value = "probe";
   message.value = "";
@@ -243,7 +314,12 @@ async function clearCredentials() {
   }
 }
 
-onMounted(refreshStatus);
+onMounted(async () => {
+  await refreshStatus();
+  // The egress IP is informational, so it resolves on open instead of sitting
+  // behind a button; saving or clearing the relay proxy refreshes it again.
+  if (props.isTauri) fetchPublicIp();
+});
 </script>
 
 <template>
@@ -321,6 +397,76 @@ onMounted(refreshStatus);
         </button>
       </div>
 
+      <div class="mt-2.5 rounded-lg border border-slate-200/70 bg-white/60 px-2.5 py-2 dark:border-slate-700/70 dark:bg-slate-950/30">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+            {{ t("publishFlow.credentials.proxyTitle") }}
+          </span>
+          <span
+            class="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+            :class="proxy.configured
+              ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300'
+              : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'"
+          >
+            {{ proxy.configured
+              ? t("publishFlow.credentials.proxyOn", { url: proxy.urlMasked })
+              : t("publishFlow.credentials.proxyOff") }}
+          </span>
+          <div class="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              class="inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+              :disabled="proxyBusy"
+              @click="toggleProxyForm"
+            >
+              <AppIcon name="link" :size="12" />
+              {{ proxy.configured ? t("publishFlow.credentials.proxyUpdate") : t("publishFlow.credentials.proxySetup") }}
+            </button>
+            <button
+              v-if="proxy.configured"
+              type="button"
+              class="inline-flex h-7 items-center rounded-md px-2 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60 dark:text-slate-400 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+              :disabled="proxyBusy"
+              @click="clearProxy"
+            >
+              {{ t("publishFlow.credentials.proxyClear") }}
+            </button>
+          </div>
+        </div>
+        <p class="mt-1 text-[10px] leading-4 text-slate-500 dark:text-slate-400">
+          {{ t("publishFlow.credentials.proxyHint") }}
+        </p>
+
+        <form v-if="proxyOpen" ref="proxyFormRef" class="mt-1.5 flex flex-wrap items-center gap-2" @submit.prevent="saveProxy">
+          <input
+            ref="proxyInputRef"
+            v-model="proxyUrl"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            class="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-slate-800 outline-none focus:border-blue-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            :placeholder="t('publishFlow.credentials.proxyPlaceholder')"
+          />
+          <button
+            type="submit"
+            class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-bold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!proxyUrl.trim() || proxyBusy"
+          >
+            <AppIcon :name="proxyBusy ? 'loader' : 'save'" :size="14" :class="{ 'animate-spin': proxyBusy }" />
+            {{ proxyBusy ? t("publishFlow.credentials.proxySaving") : t("publishFlow.credentials.proxySave") }}
+          </button>
+          <button
+            type="button"
+            class="inline-flex h-8 items-center rounded-lg px-2.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+            @click="toggleProxyForm"
+          >
+            {{ t("publishFlow.credentials.cancel") }}
+          </button>
+        </form>
+        <p v-if="proxyMessage" class="mt-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">{{ proxyMessage }}</p>
+        <p v-if="proxyError" class="mt-1 text-[10px] font-medium text-rose-600 dark:text-rose-300">{{ proxyError }}</p>
+      </div>
+
       <div class="mt-2.5 rounded-lg bg-slate-50/80 px-2.5 py-2 dark:bg-slate-800/50">
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
@@ -329,19 +475,13 @@ onMounted(refreshStatus);
           <span class="min-w-0 break-all text-[10px] text-slate-500 dark:text-slate-400">
             {{ t("publishFlow.credentials.exitIpHint") }}
           </span>
-          <button
-            type="button"
-            class="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-            :disabled="fetchingIp"
-            @click="fetchPublicIp"
+          <span
+            v-if="fetchingIp"
+            class="ml-auto inline-flex items-center gap-1 text-[10px] font-medium text-slate-400 dark:text-slate-500"
           >
-            <AppIcon
-              :name="fetchingIp ? 'loader' : 'globe'"
-              :size="12"
-              :class="{ 'animate-spin': fetchingIp }"
-            />
-            {{ fetchingIp ? t("publishFlow.credentials.fetchingIp") : t("publishFlow.credentials.fetchIp") }}
-          </button>
+            <AppIcon name="loader" :size="10" class="animate-spin" />
+            {{ t("publishFlow.credentials.fetchingIp") }}
+          </span>
         </div>
 
         <div v-if="publicIp" class="mt-1.5 flex flex-wrap items-center gap-2">
@@ -361,7 +501,9 @@ onMounted(refreshStatus);
         </p>
 
         <p class="mt-1 text-[10px] leading-4 text-slate-500 dark:text-slate-400">
-          {{ t("publishFlow.credentials.ipHint") }}
+          {{ proxy.configured
+            ? t("publishFlow.credentials.proxiedIpHint")
+            : t("publishFlow.credentials.ipHint") }}
         </p>
       </div>
 

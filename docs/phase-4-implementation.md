@@ -22,7 +22,7 @@
 | 路径安全 | 相对路径只允许 `images/<文件>` 或根级文件，拒绝 `..`、绝对路径、反斜杠、盘符、第三层目录与扩展名白名单外的文件；写入前 `canonicalize` 校验未逃逸出包目录；扩展名白名单 jpg/jpeg/png/json/txt/html/md；单文件上限 64 MB |
 | 浏览器降级 | 桌面端固定写入应用自己的发布包目录，不弹目录选择；无 Tauri 时使用 File System Access API（`showDirectoryPicker`）写真实目录；两者都不可用时按钮禁用并说明原因，点击被浏览器拦截时给本地化提示而不是抛原始 DOMException |
 | 小红书半自动 | 生成发布包后：复制标题 / 复制正文+标签 / 复制全部文案、打开 `creator.xiaohongshu.com` 创作平台、打开发布包目录、标记已发布。不做浏览器自动化、不做 OCR |
-| 公众号 | 凭据在「设置 → 渠道接入」（Keychain），出口 IP 可在同一处一键查询（白名单仍须在微信后台手动添加）；`probe_channel_permissions` 只读探测接口权限；探测到草稿箱可用时，`publish_wechat_draft_from_bundle` 以刚生成的发布包为上传源：逐张 `media/uploadimg`、封面 `material/add_material`、再 `draft/add` 建草稿。`apiReady` 仍为 false，因为能否推送取决于账号权限探测结果 |
+| 公众号 | 凭据在「设置 → 渠道接入」（Keychain），出口 IP 可在同一处一键查询（白名单仍须在微信后台手动添加）；`probe_channel_permissions` 只读探测接口权限，结论缓存在 `markcard_channel_permissions_v1`（30 天有效），发布弹窗里可就地「检测接口权限」；`publish_wechat_draft_from_bundle` 以刚生成的发布包为唯一上传源：逐张 `material/add_material?type=image`（按 `sha256` 复用素材 id），再 `draft/add` 建一条 `article_type: "newspic"` 图片消息草稿，不群发。权限缓存缺失或过期都不再隐藏推送按钮，只有微信自己给出的结论（`48001` / `40164` / `40001|41001|42001`）才会拦住推送 |
 | 发布记录 | `markcard_publish_history_v1`：渠道、模式、状态、标题、图片数、包路径、内容 hash、时间。只存标题与 hash，不存正文全文 |
 | 幂等提示 | `contentHash = sha256(渠道 + 画布 + 标题 + 正文 + 标签 + 页序)`，校验步骤里提示「同一内容已在 … 生成过发布包」 |
 | 发布中心 | 一级页改为真实内容：作品与渠道摘要、变体列表与覆盖项计数、摘要指标、检查清单、发布记录（打开目录 / 删除记录） |
